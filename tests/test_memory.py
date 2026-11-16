@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from memory.database import Database
 
 @pytest.fixture
@@ -10,7 +10,7 @@ def db(tmp_path):
 
 def test_review_priority(db):
     """Test 1: An item missed more frequently appears before an item answered correctly."""
-    past_due = (datetime.utcnow() - timedelta(hours=1)).isoformat()
+    past_due = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     
     with db._get_connection() as conn:
         cursor = conn.cursor()
@@ -26,7 +26,7 @@ def test_review_priority(db):
 
 def test_due_items_limit(db):
     """Test 2: If 10 items are due and you request 3, you get only 3."""
-    past_due = (datetime.utcnow() - timedelta(hours=1)).isoformat()
+    past_due = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     with db._get_connection() as conn:
         cursor = conn.cursor()
         for i in range(10):
@@ -42,7 +42,7 @@ def test_checkpoint_save_and_load(db):
     session_id = 1
     with db._get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO sessions (id, started_at) VALUES (?, ?)", (session_id, datetime.utcnow().isoformat()))
+        cursor.execute("INSERT INTO sessions (id, started_at) VALUES (?, ?)", (session_id, datetime.now(UTC).isoformat()))
         conn.commit()
 
     db.save_checkpoint(session_id=session_id, current_turn=4, state_data="active_vocab_focus")
@@ -57,7 +57,7 @@ def test_crash_recovery(db):
     session_id = 1
     with db._get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO sessions (id, started_at) VALUES (?, ?)", (session_id, datetime.utcnow().isoformat()))
+        cursor.execute("INSERT INTO sessions (id, started_at) VALUES (?, ?)", (session_id, datetime.now(UTC).isoformat()))
         conn.commit()
 
     db.save_checkpoint(session_id=session_id, current_turn=2)

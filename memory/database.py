@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -66,7 +66,7 @@ class Database:
 
     def record_result(self, item_id: int, correct: bool) -> None:
         """Updates item review stats based on performance."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         with self._get_connection() as conn:
             cursor = conn.cursor()
             
@@ -93,7 +93,7 @@ class Database:
 
     def get_due_items(self, limit: int) -> List[Dict[str, Any]]:
         """Retrieves items due for revision, prioritized by frequency of misses."""
-        now_str = datetime.utcnow().isoformat()
+        now_str = datetime.now(UTC).isoformat()
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""

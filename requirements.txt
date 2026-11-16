@@ -1,2 +1,4 @@
 pytest
 ruff
+faster-whisper
+av==18.1.0
