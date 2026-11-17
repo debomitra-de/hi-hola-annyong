@@ -2,3 +2,12 @@ pytest
 ruff
 faster-whisper
 av==18.1.0
+ffmpeg
+pkg-config 
+phonemizer
+torch
+transformers
+scipy
+soundfile
+kokoro
+espeak-ng

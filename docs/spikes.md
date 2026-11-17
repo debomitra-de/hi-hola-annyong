@@ -115,3 +115,11 @@ Transcription: FSI spanish basic course unit 21 tape 3 replacement rails page 49
 Time: 17.08 seconds
 PASS
 
+## 3. Cnam phonemizer
+- Package: phonemizer
+- Backend: espeak-ng
+- Language: es
+Input: Hola, ¿cómo estás?
+IPA: ola komo estas
+Time: 5.2829 seconds
+PASS

@@ -6,11 +6,10 @@ interfaces.
 ## Setup
 
 ```bash
-brew install python@3.12 pkg-config ffmpeg
+brew install python@3.12
 $(brew --prefix python@3.12)/bin/python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python -m pip install faster-whisper
 ```
 
 Run tests and lint:
