@@ -122,10 +122,9 @@ class Database:
 
                 CREATE TABLE IF NOT EXISTS books (
                     id INTEGER PRIMARY KEY,
-                    sha256 TEXT NOT NULL UNIQUE,
-                    filename TEXT NOT NULL,
+                    file_hash TEXT NOT NULL UNIQUE,
+                    original_filename TEXT NOT NULL,
                     stored_path TEXT NOT NULL,
-                    page_count INTEGER NOT NULL,
                     uploaded_at TEXT NOT NULL
                 );
 
@@ -147,7 +146,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS chapter_progress (
                     chapter_id INTEGER PRIMARY KEY REFERENCES chapters(id),
                     sessions_completed INTEGER NOT NULL DEFAULT 0,
-                    mastery REAL NOT NULL DEFAULT 0,
+                    mastery_estimate REAL NOT NULL DEFAULT 0,
                     last_studied TEXT
                 );
             """)
@@ -245,7 +244,6 @@ class Database:
                     FROM session_state_legacy
                 """)
                 conn.execute("DROP TABLE session_state_legacy")
-            conn.commit()
 
     @staticmethod
     def wait_days(box: int) -> int:
@@ -476,3 +474,111 @@ class Database:
             result = dict(row)
             result["current_turn"] = result["step"]
             return result
+
+    # ------------------------------------------------------------------
+    # Books
+    # ------------------------------------------------------------------
+
+    def insert_book(self, file_hash: str, original_filename: str, stored_path: str) -> int:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO books (file_hash, original_filename, stored_path, uploaded_at) VALUES (?, ?, ?, ?)",
+                (file_hash, original_filename, stored_path, datetime.now(UTC).isoformat()),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_book_by_hash(self, file_hash: str) -> dict[str, Any] | None:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM books WHERE file_hash = ?", (file_hash,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_book(self, book_id: int) -> dict[str, Any] | None:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM books WHERE id = ?", (book_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Chapters
+    # ------------------------------------------------------------------
+
+    def insert_chapter(
+        self,
+        book_id: int,
+        index: int,
+        title: str,
+        page_start: int,
+        page_end: int,
+        word_count: int = 0,
+    ) -> int:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO chapters (book_id, idx, title, page_start, page_end, word_count)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (book_id, index, title, page_start, page_end, word_count),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_chapters(self, book_id: int) -> list[dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM chapters WHERE book_id = ? ORDER BY idx",
+                (book_id,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_chapter(self, chapter_id: int) -> dict[str, Any] | None:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM chapters WHERE id = ?", (chapter_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_chapter_processed(
+        self, chapter_id: int, cleaned_text: str, vocab_json: str, summary: str = ""
+    ) -> None:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE chapters
+                   SET cleaned_text = ?, vocab_json = ?, summary = ?, processed_at = ?
+                   WHERE id = ?""",
+                (cleaned_text, vocab_json, summary, datetime.now(UTC).isoformat(), chapter_id),
+            )
+            conn.commit()
+
+    # ------------------------------------------------------------------
+    # Chapter progress
+    # ------------------------------------------------------------------
+
+    def get_chapter_progress(self, chapter_id: int) -> dict[str, Any]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM chapter_progress WHERE chapter_id = ?", (chapter_id,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return {"chapter_id": chapter_id, "sessions_completed": 0, "mastery_estimate": 0.0, "last_studied": None}
+
+    def update_chapter_progress(self, chapter_id: int, mastery_delta: float = 0.0) -> None:
+        now = datetime.now(UTC).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO chapter_progress (chapter_id, sessions_completed, mastery_estimate, last_studied)
+                   VALUES (?, 1, ?, ?)
+                   ON CONFLICT(chapter_id) DO UPDATE SET
+                       sessions_completed = sessions_completed + 1,
+                       mastery_estimate = MIN(1.0, mastery_estimate + ?),
+                       last_studied = ?""",
+                (chapter_id, mastery_delta, now, mastery_delta, now),
+            )
+            conn.commit()

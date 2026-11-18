@@ -8,3 +8,13 @@ __pycache__/
 .ruff_cache/
 data/
 *.egg-info/
+
+# JS
+node_modules
+ui/dist/
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
