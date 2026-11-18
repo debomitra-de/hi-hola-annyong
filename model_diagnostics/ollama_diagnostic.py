@@ -1,8 +1,8 @@
 
 import json
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 
 MODEL = "qwen2.5:3b"
 URL = "http://localhost:11434/api/chat"
@@ -45,7 +45,7 @@ def main():
         elapsed = time.perf_counter() - start
         print(f"FAIL: {error}")
         print(f"Time: {elapsed:.2f} seconds")
-        raise SystemExit(1)
+        raise SystemExit(1) from error
 
 
 if __name__ == "__main__":

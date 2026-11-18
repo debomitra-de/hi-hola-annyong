@@ -1,0 +1,256 @@
+from io import BytesIO
+from typing import Any
+
+import numpy as np
+import soundfile as sf
+from scipy.signal import resample_poly
+
+
+def convert_wav(
+    wav_bytes: bytes,
+    target_sample_rate: int,
+    target_channels: int = 1,
+) -> bytes:
+    """Decode WAV bytes, resample, and return mono/stereo 16-bit PCM WAV bytes."""
+    if target_sample_rate <= 0:
+        raise ValueError("target_sample_rate must be positive")
+    if target_channels not in (1, 2):
+        raise ValueError("target_channels must be 1 or 2")
+
+    audio, sample_rate = sf.read(
+        BytesIO(wav_bytes),
+        dtype="float32",
+        always_2d=True,
+    )
+    if audio.size == 0:
+        raise ValueError("Audio cannot be empty")
+
+    if target_channels == 1:
+        audio = np.mean(audio, axis=1)
+    elif audio.shape[1] == 1:
+        audio = np.repeat(audio, 2, axis=1)
+
+    if sample_rate != target_sample_rate:
+        if audio.ndim == 1:
+            gcd = np.gcd(sample_rate, target_sample_rate)
+            audio = resample_poly(
+                audio,
+                target_sample_rate // gcd,
+                sample_rate // gcd,
+            )
+        else:
+            channels = []
+            for channel in range(audio.shape[1]):
+                gcd = np.gcd(sample_rate, target_sample_rate)
+                channels.append(
+                    resample_poly(
+                        audio[:, channel],
+                        target_sample_rate // gcd,
+                        sample_rate // gcd,
+                    )
+                )
+            audio = np.column_stack(channels)
+
+    output = BytesIO()
+    sf.write(output, audio, target_sample_rate, format="WAV", subtype="PCM_16")
+    return output.getvalue()
+
+
+class AudioRecorder:
+    """Tap-to-start/tap-to-stop mono WAV recorder."""
+
+    def __init__(self, sample_rate: int = 16_000) -> None:
+        if sample_rate <= 0:
+            raise ValueError("sample_rate must be positive")
+        self.sample_rate = sample_rate
+        self._stream: Any = None
+        self._chunks: list[np.ndarray] = []
+
+    def start(self) -> None:
+        try:
+            import sounddevice as sd
+        except ImportError as error:
+            raise RuntimeError(
+                "Microphone recording requires sounddevice. Install requirements.txt."
+            ) from error
+
+        if self._stream is not None:
+            raise RuntimeError("Recording is already in progress")
+
+        def callback(
+            indata: np.ndarray,
+            frames: int,
+            time_info: object,
+            status: object,
+        ) -> None:
+            del frames, time_info, status
+            self._chunks.append(np.array(indata[:, 0], copy=True))
+
+        self._chunks = []
+        self._stream = sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype="float32",
+            callback=callback,
+        )
+        self._stream.start()
+
+    def stop(self) -> bytes:
+        if self._stream is None:
+            raise RuntimeError("No recording is in progress")
+
+        self._stream.stop()
+        self._stream.close()
+        self._stream = None
+
+        if not self._chunks:
+            raise RuntimeError("No microphone audio was captured")
+
+        audio = np.concatenate(self._chunks)
+        self._chunks = []
+        output = BytesIO()
+        sf.write(
+            output,
+            audio,
+            self.sample_rate,
+            format="WAV",
+            subtype="PCM_16",
+        )
+        return output.getvalue()
+
+
+def record_wav(duration_seconds: float, sample_rate: int = 16_000) -> bytes:
+    """Record mono WAV for a fixed maximum duration."""
+    try:
+        import sounddevice as sd
+    except ImportError as error:
+        raise RuntimeError(
+            "Microphone recording requires sounddevice. Install requirements.txt."
+        ) from error
+
+    if duration_seconds <= 0:
+        raise ValueError("duration_seconds must be positive")
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+
+    audio = sd.rec(
+        int(duration_seconds * sample_rate),
+        samplerate=sample_rate,
+        channels=1,
+        dtype="float32",
+    )
+    sd.wait()
+    output = BytesIO()
+    sf.write(output, audio[:, 0], sample_rate, format="WAV", subtype="PCM_16")
+    return output.getvalue()
+
+
+def play_wav(wav_bytes: bytes) -> None:
+    """Play WAV bytes using PortAudio. Requires sounddevice."""
+    try:
+        import sounddevice as sd
+    except ImportError as error:
+        raise RuntimeError(
+            "Audio playback requires sounddevice. Install requirements.txt."
+        ) from error
+
+    audio, sample_rate = sf.read(BytesIO(wav_bytes), dtype="float32", always_2d=False)
+    sd.play(audio, sample_rate)
+    sd.wait()
+
+
+class WhisperTranscriber:
+    """Lazy faster-whisper adapter that accepts and returns in-memory WAV bytes."""
+
+    def __init__(
+        self,
+        model_name: str = "small",
+        device: str = "cpu",
+        compute_type: str = "int8",
+    ) -> None:
+        self.model_name = model_name
+        self.device = device
+        self.compute_type = compute_type
+        self._model: Any = None
+
+    def _get_model(self) -> Any:
+        if self._model is None:
+            from faster_whisper import WhisperModel
+
+            self._model = WhisperModel(
+                self.model_name,
+                device=self.device,
+                compute_type=self.compute_type,
+            )
+        return self._model
+
+    def transcribe(self, wav_bytes: bytes) -> dict:
+        converted = convert_wav(wav_bytes, 16_000, 1)
+        audio, _sample_rate = sf.read(BytesIO(converted), dtype="float32")
+        segments, info = self._get_model().transcribe(
+            audio,
+            language="es",
+            word_timestamps=True,
+            vad_filter=True,
+        )
+
+        segment_list = list(segments)
+        text = " ".join(segment.text.strip() for segment in segment_list).strip()
+        words: list[tuple[str, float]] = []
+        for segment in segment_list:
+            for word in getattr(segment, "words", None) or []:
+                confidence = getattr(word, "probability", 0.0)
+                words.append((word.word.strip(), float(confidence)))
+
+        return {
+            "text": text,
+            "words": words,
+            "language": info.language,
+        }
+
+
+class KokoroSynthesizer:
+    """Lazy Kokoro TTS adapter producing in-memory WAV bytes."""
+
+    def __init__(
+        self,
+        voice: str = "ef_dora",
+        lang_code: str = "e",
+        sample_rate: int = 24_000,
+    ) -> None:
+        self.voice = voice
+        self.lang_code = lang_code
+        self.sample_rate = sample_rate
+        self._pipeline: Any = None
+
+    def _get_pipeline(self) -> Any:
+        if self._pipeline is None:
+            from kokoro import KPipeline
+
+            self._pipeline = KPipeline(lang_code=self.lang_code)
+        return self._pipeline
+
+    def speak(self, text: str, voice: str | None = None) -> bytes:
+        if not text.strip():
+            raise ValueError("text cannot be empty")
+
+        chunks = [
+            audio
+            for _, _, audio in self._get_pipeline()(
+                text,
+                voice=voice or self.voice,
+            )
+        ]
+        if not chunks:
+            return b""
+
+        combined = np.concatenate(chunks)
+        output = BytesIO()
+        sf.write(
+            output,
+            combined,
+            self.sample_rate,
+            format="WAV",
+            subtype="PCM_16",
+        )
+        return output.getvalue()

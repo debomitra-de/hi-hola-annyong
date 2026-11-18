@@ -1,7 +1,6 @@
-
 import time
-from phonemizer import phonemize
 
+from phonemizer import phonemize
 
 TEXT = "Hola, ¿cómo estás?"
 
@@ -32,7 +31,7 @@ def main():
         elapsed = time.perf_counter() - start
         print(f"FAIL: {error}")
         print(f"Time: {elapsed:.4f} seconds")
-        raise SystemExit(1)
+        raise SystemExit(1) from error
 
 
 if __name__ == "__main__":

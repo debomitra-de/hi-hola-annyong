@@ -1,5 +1,6 @@
 from typing import Any
-
+_pronunciation_scorer = None
+PRONUNCIATION_ENABLED = False
 _checkpoints: dict[str, Any] = {}
 _books: dict[str, Any] = {}
 
@@ -51,3 +52,15 @@ def load_checkpoint(session_id: str) -> Any:
 
 def generate_quiz(session_id: str) -> list:
     return []
+
+def score_pronunciation(audio_bytes: bytes, target_text: str):
+    if not PRONUNCIATION_ENABLED:
+        return None
+
+    global _pronunciation_scorer
+
+    if _pronunciation_scorer is None:
+        from pronunciation.scorer import PronunciationScorer
+        _pronunciation_scorer = PronunciationScorer()
+
+    return _pronunciation_scorer.score(audio_bytes, target_text)

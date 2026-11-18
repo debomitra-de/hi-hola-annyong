@@ -5,11 +5,14 @@ interfaces.
 
 ## Setup
 
+See [the development setup guide](docs/setup.md) for platform-specific
+dependencies and environment setup.
+
 ```bash
-brew install python@3.12
-$(brew --prefix python@3.12)/bin/python3.12 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 Run tests and lint:
@@ -17,12 +20,4 @@ Run tests and lint:
 ```bash
 python -m pytest -q
 python -m ruff check .
-```
-
-## Optional Ollama
-
-```bash
-brew install --cask ollama
-ollama pull qwen2.5:3b
-ollama run qwen2.5:3b
 ```
