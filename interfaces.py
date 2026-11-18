@@ -1,19 +1,81 @@
+import os
 from typing import Any
-_pronunciation_scorer = None
+
+_pronunciation_scorer: Any = None
+_whisper_transcriber: Any = None
+_kokoro_synthesizer: Any = None
 PRONUNCIATION_ENABLED = False
 _checkpoints: dict[str, Any] = {}
 _books: dict[str, Any] = {}
 
 
+def get_audio_adapter_mode() -> str:
+    mode = os.getenv("TUTOR_ADAPTER_MODE", "fake").strip().lower()
+    if mode not in {"fake", "real"}:
+        raise ValueError("TUTOR_ADAPTER_MODE must be 'fake' or 'real'")
+    return mode
+
+
+def configure_audio_adapters(mode: str) -> None:
+    if mode not in {"fake", "real"}:
+        raise ValueError("mode must be 'fake' or 'real'")
+    os.environ["TUTOR_ADAPTER_MODE"] = mode
+
+
+def _get_whisper_transcriber() -> Any:
+    global _whisper_transcriber
+    if _whisper_transcriber is None:
+        from audio.pipeline import WhisperTranscriber
+
+        _whisper_transcriber = WhisperTranscriber(
+            model_name="small",
+            device="cpu",
+            compute_type="int8",
+        )
+    return _whisper_transcriber
+
+
+def _get_kokoro_synthesizer() -> Any:
+    global _kokoro_synthesizer
+    if _kokoro_synthesizer is None:
+        from audio.pipeline import KokoroSynthesizer
+
+        _kokoro_synthesizer = KokoroSynthesizer(
+            voice="ef_dora",
+            lang_code="e",
+            sample_rate=24_000,
+        )
+    return _kokoro_synthesizer
+
+
 def transcribe(audio_bytes: bytes) -> dict:
+    if not isinstance(audio_bytes, bytes):
+        raise TypeError("audio_bytes must be bytes")
+    if not audio_bytes:
+        raise ValueError("audio_bytes cannot be empty")
+    if get_audio_adapter_mode() == "fake":
+        return {
+            "text": "Hola, ¿cómo estás?",
+            "word_confidences": [0.98, 0.95, 0.91],
+        }
+
+    result = _get_whisper_transcriber().transcribe(audio_bytes)
     return {
-        "text": "Hola, ¿cómo estás?",
-        "word_confidences": [0.98, 0.95, 0.91]
+        "text": result["text"],
+        "word_confidences": [confidence for _, confidence in result["words"]],
     }
 
 
 def speak(text: str, voice: str) -> bytes:
-    return b"fake_audio_data"
+    if not isinstance(text, str):
+        raise TypeError("text must be a string")
+    if not text.strip():
+        raise ValueError("text cannot be empty")
+    if get_audio_adapter_mode() == "fake":
+        return b"fake_audio_data"
+
+    kokoro_voice = "ef_dora" if voice in {"", "default"} else voice
+    return _get_kokoro_synthesizer().speak(text, kokoro_voice)
 
 
 def get_due_items(limit: int) -> list:

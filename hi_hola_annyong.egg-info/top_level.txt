@@ -1,4 +1,0 @@
-audio
-memory
-model_diagnostics
-pronunciation

@@ -69,7 +69,7 @@ class AudioRecorder:
     def start(self) -> None:
         try:
             import sounddevice as sd
-        except ImportError as error:
+        except (ImportError, OSError) as error:
             raise RuntimeError(
                 "Microphone recording requires sounddevice. Install requirements.txt."
             ) from error
@@ -121,17 +121,17 @@ class AudioRecorder:
 
 def record_wav(duration_seconds: float, sample_rate: int = 16_000) -> bytes:
     """Record mono WAV for a fixed maximum duration."""
-    try:
-        import sounddevice as sd
-    except ImportError as error:
-        raise RuntimeError(
-            "Microphone recording requires sounddevice. Install requirements.txt."
-        ) from error
-
     if duration_seconds <= 0:
         raise ValueError("duration_seconds must be positive")
     if sample_rate <= 0:
         raise ValueError("sample_rate must be positive")
+
+    try:
+        import sounddevice as sd
+    except (ImportError, OSError) as error:
+        raise RuntimeError(
+            "Microphone recording requires sounddevice. Install requirements.txt."
+        ) from error
 
     audio = sd.rec(
         int(duration_seconds * sample_rate),
@@ -149,7 +149,7 @@ def play_wav(wav_bytes: bytes) -> None:
     """Play WAV bytes using PortAudio. Requires sounddevice."""
     try:
         import sounddevice as sd
-    except ImportError as error:
+    except (ImportError, OSError) as error:
         raise RuntimeError(
             "Audio playback requires sounddevice. Install requirements.txt."
         ) from error

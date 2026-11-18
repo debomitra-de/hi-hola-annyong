@@ -1,3 +1,6 @@
+import pytest
+
+import interfaces
 from interfaces import (
     generate_quiz,
     get_due_items,
@@ -67,6 +70,52 @@ def test_load_checkpoint_returns_none_for_unknown_session():
 
 def test_generate_quiz_returns_a_list():
     assert generate_quiz("session_1") == []
+
+
+class MockWhisper:
+    def transcribe(self, audio_bytes):
+        assert audio_bytes == b"real wav"
+        return {
+            "text": "Me llamo Ana",
+            "words": [("Me", 0.99), ("llamo", 0.96), ("Ana", 0.93)],
+            "language": "es",
+        }
+
+
+class MockKokoro:
+    def speak(self, text, voice):
+        assert text == "Hola"
+        assert voice == "ef_dora"
+        return b"real wav"
+
+
+def test_real_transcribe_interface(monkeypatch):
+    monkeypatch.setenv("TUTOR_ADAPTER_MODE", "real")
+    monkeypatch.setattr(interfaces, "_whisper_transcriber", MockWhisper())
+
+    assert transcribe(b"real wav") == {
+        "text": "Me llamo Ana",
+        "word_confidences": [0.99, 0.96, 0.93],
+    }
+
+
+def test_real_speak_interface(monkeypatch):
+    monkeypatch.setenv("TUTOR_ADAPTER_MODE", "real")
+    monkeypatch.setattr(interfaces, "_kokoro_synthesizer", MockKokoro())
+
+    assert speak("Hola", "default") == b"real wav"
+
+
+@pytest.mark.parametrize("mode", ["fake", "real"])
+def test_configure_audio_adapters_accepts_valid_modes(monkeypatch, mode):
+    monkeypatch.delenv("TUTOR_ADAPTER_MODE", raising=False)
+    interfaces.configure_audio_adapters(mode)
+    assert interfaces.get_audio_adapter_mode() == mode
+
+
+def test_configure_audio_adapters_rejects_invalid_mode():
+    with pytest.raises(ValueError, match="mode must be 'fake' or 'real'"):
+        interfaces.configure_audio_adapters("invalid")
 
 def score_pronunciation(audio_bytes, target_text):
     # This is a placeholder implementation for the pronunciation scoring function.
