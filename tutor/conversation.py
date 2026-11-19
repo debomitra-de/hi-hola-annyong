@@ -139,6 +139,7 @@ class ConversationEngine:
         llm: LLMAdapter,
         level: str = "A1",
         max_history_turns: int = 20,
+        chapter_text: str = "",
     ) -> None:
         if level not in {"A1", "A2", "B1"}:
             raise ValueError("level must be A1, A2, or B1")
@@ -147,13 +148,36 @@ class ConversationEngine:
         self.llm = llm
         self.level = level
         self.max_history_turns = max_history_turns
+
+        chapter_instruction = ""
+        if chapter_text.strip():
+            # Give LLM only the first 1500 chars per "section" so it doesn't skip material
+            excerpt = chapter_text.strip()[:1500]
+            level_guide = {
+                "A1": "Use very simple Spanish. Max 8 words per sentence. One idea at a time.",
+                "A2": "Use simple Spanish. Max 12 words per sentence.",
+                "B1": "Use natural Spanish. Sentences can be moderate length.",
+            }[level]
+            chapter_instruction = (
+                f"\n\nYou are teaching from this chapter. {level_guide} "
+                "Pick 3-4 key words or phrases from the material below. "
+                "Introduce ONE word at a time: say it, give a simple example, then ask the learner to use it. "
+                "Do NOT summarise or explain the whole chapter. Teach like a patient human teacher, not a textbook. "
+                "Correct mistakes gently. Move to the next word only after the learner practises the current one.\n\n"
+                f"Chapter material:\n{excerpt}"
+            )
+
         self.history: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": (
-                    "You are a Spanish Spain tutor. Respond in valid JSON only. "
-                    f"The learner's level is {level}. Return a short Spanish "
-                    "prompt and an accurate English caption."
+                    f"You are a friendly Spanish (Spain) tutor. The learner's level is {level}. "
+                    "Your job: correct mistakes gently, introduce new vocabulary, and keep the "
+                    "conversation moving with a follow-up question or prompt in Spanish. "
+                    "Never just repeat what the learner said. "
+                    "If the learner speaks English, reply in Spanish and encourage them to try in Spanish. "
+                    f"{chapter_instruction}"
+                    "Respond in valid JSON only — no extra text outside the JSON."
                 ),
             }
         ]

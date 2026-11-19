@@ -27,6 +27,7 @@ def configure_audio_adapters(mode: str) -> None:
 def configure_conversation(
     mode: str = "fake",
     level: str = "A1",
+    chapter_text: str = "",
 ) -> None:
     global _conversation_engine
     if mode not in {"fake", "real"}:
@@ -42,7 +43,7 @@ def configure_conversation(
         from tutor.conversation import ConversationEngine, MockLLM
 
         llm = MockLLM()
-    _conversation_engine = ConversationEngine(llm=llm, level=level)
+    _conversation_engine = ConversationEngine(llm=llm, level=level, chapter_text=chapter_text)
     os.environ["TUTOR_LLM_MODE"] = mode
 
 

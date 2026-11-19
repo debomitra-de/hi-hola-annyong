@@ -1,78 +1,88 @@
 # Development Setup
 
-## Python environment
-
-Install uv, Python 3.12, and the project dependencies:
+## 1. Python environment
 
 ```bash
+# macOS / Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows (PowerShell)
+irm https://astral.sh/uv/install.ps1 | iex
+```
+
+```bash
 uv python install 3.12
 uv sync --locked
 ```
 
-## macOS
+## 2. System dependencies
 
-Install native audio and phoneme dependencies:
+### macOS
 
 ```bash
 brew install pkg-config ffmpeg espeak-ng portaudio
 ```
 
-## Ubuntu
+### Ubuntu
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y ffmpeg pkg-config espeak-ng libportaudio2 portaudio19-dev
 ```
 
-## Windows
+### Windows
 
-Windows setup requires PowerShell and winget:
+**FFmpeg** — install via winget, or manually:
 
-```powershell
-winget install --id astral-sh.uv -e
-winget install --id Ollama.Ollama -e
-winget install --id Gyan.FFmpeg -e
-```
-
-UV:
+1. Download `ffmpeg-release-essentials.zip` from https://www.gyan.dev/ffmpeg/builds/
+2. Extract it and note the inner `bin\` folder
+3. Add that `bin\` folder to PATH:
 
 ```powershell
-uv python install 3.12
-uv sync --locked
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\Users\<you>\ffmpeg\bin", "Machine")
 ```
 
-Install eSpeak NG with the official Windows installer and add it to `PATH`.
-If `phonemizer` cannot locate it, set `PHONEMIZER_ESPEAK_LIBRARY` to the
-installed `libespeak-ng.dll` path.
+4. Reopen your terminal and verify: `ffmpeg -version`
 
-PortAudio is bundled with `sounddevice`'s supported Windows wheel. No separate
-PortAudio package is normally required.
+**eSpeak NG** — install with the official Windows installer and add it to PATH.
+If `phonemizer` cannot locate it, set:
 
-## Ollama
+```powershell
+$env:PHONEMIZER_ESPEAK_LIBRARY = "C:\Program Files\eSpeak NG\libespeak-ng.dll"
+```
 
-Install Ollama for the current platform, then start the server:
+**PortAudio** is bundled with the `sounddevice` wheel — no separate install needed.
+
+## 3. Ollama
+
+```bash
+# macOS / Linux
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Windows (PowerShell)
+irm https://ollama.com/install.ps1 | iex
+```
+
+Pull the default model and start the server:
 
 ```bash
 ollama pull qwen2.5:3b
 ollama serve
 ```
 
-Keep `ollama serve` running in a separate terminal. If Ollama is already
-running as a macOS or Windows background service, do not start it again.
+Keep `ollama serve` running in a separate terminal. On macOS and Windows, Ollama
+may already run as a background service — skip `ollama serve` in that case.
 
-Qwen 2.5 3B is a local system model. It is not installed by `uv sync`.
-The app calls Ollama at `http://localhost:11434`; no API key or cloud service
-is required.
+The app calls Ollama at `http://localhost:11434`; no API key or cloud service is required.
 
-Check Ollama from any platform:
+Verify:
 
 ```bash
 ollama list
 curl http://localhost:11434/api/tags
 ```
 
-## Kokoro and CNAM model downloads
+## 4. Model downloads
 
 Models are downloaded by their libraries on first real use:
 
@@ -88,7 +98,7 @@ afterward.
 
 CI never downloads or runs these models.
 
-## Verification
+## 5. Verification
 
 Run the repository checks:
 
