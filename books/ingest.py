@@ -3,9 +3,13 @@ import json
 import re
 from pathlib import Path
 
-import fitz  # PyMuPDF
+import pymupdf
 
 from memory.database import Database
+
+
+class PdfIngestionError(ValueError):
+    """Raised when a PDF cannot be ingested for learning."""
 
 
 def _compute_hash(pdf_path: str) -> str:
@@ -28,7 +32,7 @@ def _is_content_chapter(title: str) -> bool:
     return not _SKIP_TITLES.match(title.strip())
 
 
-def _detect_chapters(doc: fitz.Document) -> list[dict]:
+def _detect_chapters(doc: pymupdf.Document) -> list[dict]:
     """Detect chapters from PDF outline first, then heading patterns."""
     chapters = []
 
@@ -62,18 +66,41 @@ def _detect_chapters(doc: fitz.Document) -> list[dict]:
 
 def ingest_book(pdf_path: str, db: Database) -> int:
     """Hash the PDF, skip if already stored, index chapters. Returns book_id."""
-    file_hash = _compute_hash(pdf_path)
+    path = Path(pdf_path)
+    if not path.is_file():
+        raise PdfIngestionError(f"PDF file not found: {path}")
+
+    file_hash = _compute_hash(str(path))
     existing = db.get_book_by_hash(file_hash)
     if existing:
         return existing["id"]
 
+    try:
+        doc = pymupdf.open(str(path))
+    except Exception as exc:
+        raise PdfIngestionError(f"Could not read PDF: {path.name}") from exc
+
+    if doc.page_count == 0:
+        doc.close()
+        raise PdfIngestionError("This PDF has no pages.")
+
+    page_text = [
+        doc[page_num].get_text("text").strip()
+        for page_num in range(doc.page_count)
+    ]
+    if not "\n".join(page_text).strip():
+        doc.close()
+        raise PdfIngestionError(
+            "This PDF has no readable text layer. Scanned PDFs are not supported yet."
+        )
+
     book_id = db.insert_book(
         file_hash=file_hash,
-        original_filename=Path(pdf_path).name,
-        stored_path=str(Path(pdf_path).resolve()),
+        original_filename=path.name,
+        stored_path=str(path.resolve()),
+        page_count=doc.page_count,
     )
 
-    doc = fitz.open(pdf_path)
     content_chapters = [ch for ch in _detect_chapters(doc) if _is_content_chapter(ch["title"])]
     for idx, ch in enumerate(content_chapters):
         text = "".join(
@@ -105,12 +132,20 @@ def process_chapter(chapter_id: int, db: Database) -> dict:
         return chapter
 
     book = db.get_book(chapter["book_id"])
-    doc = fitz.open(book["stored_path"])
+    if not book:
+        raise ValueError(f"Book {chapter['book_id']} not found")
+
+    try:
+        doc = pymupdf.open(book["stored_path"])
+    except Exception as exc:
+        raise PdfIngestionError("Could not reopen the stored PDF.") from exc
     text = "".join(
         doc[p].get_text("text")
         for p in range(chapter["page_start"] - 1, min(chapter["page_end"], len(doc)))
     )
     doc.close()
+    if not text.strip():
+        raise PdfIngestionError("No readable text was found in this chapter.")
 
     # Top-100 unique Spanish words (4+ chars) as vocab list
     words = re.findall(r"[a-záéíóúüñ]{4,}", text.lower())

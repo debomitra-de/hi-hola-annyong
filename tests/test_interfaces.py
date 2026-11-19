@@ -38,11 +38,11 @@ def test_get_due_items_returns_a_list():
 def test_plan_lesson_returns_requested_inputs():
     due_items = ["greetings"]
 
-    assert plan_lesson("Hola", "beginner", due_items) == {
-        "source_text": "Hola",
-        "level": "beginner",
-        "due_items": due_items,
-    }
+    plan = plan_lesson("Hola", "A1", due_items)
+
+    assert plan["level"] == "A1"
+    assert plan["source"] == {"type": "topic", "ref": "Hola"}
+    assert plan["conversation_goals"]
 
 
 def test_ingest_book_returns_book_id():
@@ -104,6 +104,92 @@ def test_real_speak_interface(monkeypatch):
     monkeypatch.setattr(interfaces, "_kokoro_synthesizer", MockKokoro())
 
     assert speak("Hola", "default") == b"real wav"
+
+
+def test_process_voice_answer_connects_stt_llm_and_tts(monkeypatch):
+    monkeypatch.setattr(
+        interfaces,
+        "transcribe",
+        lambda wav: {
+            "text": "Quiero una mesa",
+            "word_confidences": [0.99, 0.98, 0.97],
+        },
+    )
+    monkeypatch.setattr(
+        interfaces,
+        "configure_conversation",
+        lambda mode, level: None,
+    )
+    monkeypatch.setattr(
+        interfaces,
+        "generate_tutor_response",
+        lambda learner_text: {
+            "kind": "feedback",
+            "es": "Muy bien.",
+            "en": "Very good.",
+            "items": [],
+        },
+    )
+    monkeypatch.setattr(
+        interfaces,
+        "speak",
+        lambda text, voice: b"spanish tutor wav",
+    )
+
+    result = interfaces.process_voice_answer(
+        b"learner wav",
+        level="A1",
+        voice="ef_dora",
+    )
+
+    assert result["learner_text"] == "Quiero una mesa"
+    assert result["tutor_message"]["es"] == "Muy bien."
+    assert result["response_wav"] == b"spanish tutor wav"
+
+
+def test_process_voice_answer_silence_skips_llm_and_tts(monkeypatch):
+    monkeypatch.setattr(
+        interfaces,
+        "transcribe",
+        lambda wav: {"text": "", "word_confidences": []},
+    )
+    monkeypatch.setattr(
+        interfaces,
+        "generate_tutor_response",
+        lambda learner_text: pytest.fail("LLM should not run for silence"),
+    )
+    monkeypatch.setattr(
+        interfaces,
+        "speak",
+        lambda text, voice: pytest.fail("TTS should not run for silence"),
+    )
+
+    result = interfaces.process_voice_answer(b"silent wav")
+
+    assert result["learner_text"] == ""
+    assert result["response_wav"] == b""
+    assert "try speaking again" in result["tutor_message"]["en"]
+
+
+def test_stop_voice_answer_resets_recorder(monkeypatch):
+    class MockRecorder:
+        def stop(self):
+            return b"learner wav"
+
+    monkeypatch.setattr(interfaces, "_audio_recorder", MockRecorder())
+    monkeypatch.setattr(
+        interfaces,
+        "process_voice_answer",
+        lambda wav, level, voice, play_response: {
+            "learner_text": "Hola",
+            "wav": wav,
+        },
+    )
+
+    result = interfaces.stop_voice_answer()
+
+    assert result["wav"] == b"learner wav"
+    assert interfaces._audio_recorder is None
 
 
 @pytest.mark.parametrize("mode", ["fake", "real"])

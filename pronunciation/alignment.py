@@ -1,4 +1,6 @@
 from pronunciation.phonemizer import normalize_ipa
+
+
 def align_phonemes(
     reference: list[str],
     hypothesis: list[str],

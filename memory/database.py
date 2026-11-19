@@ -54,6 +54,14 @@ class Database:
                 if "exercise_json" not in columns:
                     conn.execute("ALTER TABLE turns RENAME TO turns_legacy")
 
+            if "books" in tables:
+                columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(books)")
+                }
+                if "page_count" not in columns:
+                    conn.execute("ALTER TABLE books ADD COLUMN page_count INTEGER")
+
             if "session_state" in tables:
                 columns = {
                     row["name"]
@@ -125,6 +133,7 @@ class Database:
                     file_hash TEXT NOT NULL UNIQUE,
                     original_filename TEXT NOT NULL,
                     stored_path TEXT NOT NULL,
+                    page_count INTEGER,
                     uploaded_at TEXT NOT NULL
                 );
 
@@ -479,12 +488,26 @@ class Database:
     # Books
     # ------------------------------------------------------------------
 
-    def insert_book(self, file_hash: str, original_filename: str, stored_path: str) -> int:
+    def insert_book(
+        self,
+        file_hash: str,
+        original_filename: str,
+        stored_path: str,
+        page_count: int | None = None,
+    ) -> int:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO books (file_hash, original_filename, stored_path, uploaded_at) VALUES (?, ?, ?, ?)",
-                (file_hash, original_filename, stored_path, datetime.now(UTC).isoformat()),
+                """INSERT INTO books (
+                       file_hash, original_filename, stored_path, page_count, uploaded_at
+                   ) VALUES (?, ?, ?, ?, ?)""",
+                (
+                    file_hash,
+                    original_filename,
+                    stored_path,
+                    page_count,
+                    datetime.now(UTC).isoformat(),
+                ),
             )
             conn.commit()
             return cursor.lastrowid

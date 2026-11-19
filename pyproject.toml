@@ -7,7 +7,30 @@ name = "hi-hola-annyong"
 version = "0.1.0"
 description = "Local Spanish voice tutor backend"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "av==18.1.0",
+    "faster-whisper",
+    "kokoro",
+    "phonemizer",
+    "pydantic>=2",
+    "pymupdf",
+    "scipy",
+    "sounddevice",
+    "soundfile",
+    "torch",
+    "transformers",
+]
+
+[dependency-groups]
+dev = [
+    "jiwer",
+    "mypy",
+    "pytest",
+    "pytest-cov",
+    "pytest-socket",
+    "pytest-timeout",
+    "ruff",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -16,6 +39,7 @@ include = [
     "memory*",
     "pronunciation*",
     "model_diagnostics*",
+    "tutor*",
 ]
 
 [tool.pytest.ini_options]

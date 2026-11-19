@@ -2,58 +2,134 @@
 
 ## Python environment
 
-Install Python 3.12 using your platform's package manager, then create and
-activate a virtual environment:
+Install uv, Python 3.12, and the project dependencies:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m pip install -e .
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv python install 3.12
+uv sync --locked
 ```
 
 ## macOS
 
-Install the native dependencies used by audio processing and phonemization:
+Install native audio and phoneme dependencies:
 
 ```bash
-brew install python@3.12 pkg-config ffmpeg
-brew install espeak-ng
-```
-
-If Python 3.12 is not the default interpreter:
-
-```bash
-$(brew --prefix python@3.12)/bin/python3.12 -m venv .venv
+brew install pkg-config ffmpeg espeak-ng portaudio
 ```
 
 ## Ubuntu
 
-The GitHub Actions workflow installs the native dependencies with:
-
 ```bash
 sudo apt-get update
-sudo apt-get install -y ffmpeg pkg-config espeak-ng
+sudo apt-get install -y ffmpeg pkg-config espeak-ng libportaudio2 portaudio19-dev
 ```
 
-## Optional Ollama
+## Windows
+
+Windows setup requires PowerShell and winget:
+
+```powershell
+winget install --id astral-sh.uv -e
+winget install --id Ollama.Ollama -e
+winget install --id Gyan.FFmpeg -e
+```
+
+UV:
+
+```powershell
+uv python install 3.12
+uv sync --locked
+```
+
+Install eSpeak NG with the official Windows installer and add it to `PATH`.
+If `phonemizer` cannot locate it, set `PHONEMIZER_ESPEAK_LIBRARY` to the
+installed `libespeak-ng.dll` path.
+
+PortAudio is bundled with `sounddevice`'s supported Windows wheel. No separate
+PortAudio package is normally required.
+
+## Ollama
+
+Install Ollama for the current platform, then start the server:
 
 ```bash
-brew install --cask ollama
 ollama pull qwen2.5:3b
-ollama run qwen2.5:3b
+ollama serve
 ```
 
-## Tests and linting
+Keep `ollama serve` running in a separate terminal. If Ollama is already
+running as a macOS or Windows background service, do not start it again.
+
+Qwen 2.5 3B is a local system model. It is not installed by `uv sync`.
+The app calls Ollama at `http://localhost:11434`; no API key or cloud service
+is required.
+
+Check Ollama from any platform:
 
 ```bash
-python -m pytest -q
-python -m ruff check .
+ollama list
+curl http://localhost:11434/api/tags
 ```
 
-Run the CNAM phonemizer diagnostic from the repository root:
+## Kokoro and CNAM model downloads
+
+Models are downloaded by their libraries on first real use:
+
+- Kokoro: the `hexgrad/Kokoro-82M` assets are resolved by Kokoro during the first
+  `KokoroSynthesizer.speak()` call.
+- CNAM: `Cnam-LMSSC/wav2vec2-spanish-phonemizer` is downloaded by Transformers
+  during the first `SpanishPhonemizer()` construction.
+- Qwen: `qwen2.5:3b` is downloaded by `ollama pull`.
+
+All models are cached locally after the first successful download. Internet
+access is only needed for initial model installation; a session can run offline
+afterward.
+
+CI never downloads or runs these models.
+
+## Verification
+
+Run the repository checks:
 
 ```bash
-python -m model_diagnostics.cnam_diagnostic
+uv run pytest -q
+uv run ruff check .
+```
+
+Run the fixture-based Whisper diagnostic:
+
+```bash
+uv run python -m model_diagnostics.whisper_demo
+```
+
+Run live push-to-talk transcription:
+
+```bash
+uv run python -m model_diagnostics.push_to_talk_diagnostic
+```
+
+Run real TTS generation:
+
+```bash
+uv run python -m model_diagnostics.kokoro_demo
+```
+
+Test the public real adapters:
+
+```bash
+TUTOR_ADAPTER_MODE=real uv run python - <<'PY'
+from pathlib import Path
+import interfaces
+
+wav = Path("tests/fixtures/audio/spanish_sample.mp3").read_bytes()
+print(interfaces.transcribe(wav)["text"])
+print(len(interfaces.speak("Hola, ¿cómo estás?", "ef_dora")))
+PY
+```
+
+Run the CNAM diagnostic after Kokoro generated the three fixture clips:
+
+```bash
+uv run python -m model_diagnostics.cnam_diagnostic
 ```

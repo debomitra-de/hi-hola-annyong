@@ -1,6 +1,6 @@
 import pytest
 
-from pronunciation.alignment import align_phonemes
+from pronunciation.alignment import align_phonemes, calculate_per
 
 
 def test_perfect_match():
@@ -21,10 +21,6 @@ def test_insertion():
 def test_deletion():
     result = align_phonemes(["a", "x", "b"], ["a", "b"])
     assert result == [("a", "a"), ("x", None), ("b", "b")]
-
-
-from pronunciation.alignment import calculate_per
-
 
 def test_per_perfect_match():
     assert calculate_per(["a", "b", "c"], ["a", "b", "c"]) == 0.0

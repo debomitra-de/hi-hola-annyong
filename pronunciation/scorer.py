@@ -3,8 +3,8 @@ from io import BytesIO
 import soundfile as sf
 from phonemizer import phonemize as espeak_phonemize
 
-from pronunciation.phonemizer import SpanishPhonemizer
 from pronunciation.alignment import score_ipa
+from pronunciation.phonemizer import SpanishPhonemizer
 
 
 class PronunciationScorer:

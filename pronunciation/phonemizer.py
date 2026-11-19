@@ -1,6 +1,7 @@
 """Spanish speech-to-IPA transcription using the CNAM wav2vec2 model."""
 
 import unicodedata
+
 import numpy as np
 import torch
 from scipy.signal import resample_poly
