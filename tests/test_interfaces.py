@@ -18,10 +18,9 @@ from interfaces import (
 def test_transcribe_returns_text_and_word_confidences():
     result = transcribe(b"fake_audio_data")
 
-    assert result == {
-        "text": "Hola, ¿cómo estás?",
-        "word_confidences": [0.98, 0.95, 0.91],
-    }
+    assert result["text"] == "Hola, ¿cómo estás?"
+    assert result["word_confidences"] == [0.98, 0.95, 0.91]
+    assert result["unclear"] is False
 
 
 def test_speak_returns_audio_bytes():
@@ -73,12 +72,15 @@ def test_generate_quiz_returns_a_list():
 
 
 class MockWhisper:
-    def transcribe(self, audio_bytes):
+    def transcribe(self, audio_bytes, initial_prompt=""):
         assert audio_bytes == b"real wav"
         return {
             "text": "Me llamo Ana",
             "words": [("Me", 0.99), ("llamo", 0.96), ("Ana", 0.93)],
             "language": "es",
+            "unclear": False,
+            "avg_logprob": -0.3,
+            "no_speech_prob": 0.1,
         }
 
 
@@ -93,10 +95,10 @@ def test_real_transcribe_interface(monkeypatch):
     monkeypatch.setenv("TUTOR_ADAPTER_MODE", "real")
     monkeypatch.setattr(interfaces, "_whisper_transcriber", MockWhisper())
 
-    assert transcribe(b"real wav") == {
-        "text": "Me llamo Ana",
-        "word_confidences": [0.99, 0.96, 0.93],
-    }
+    result = transcribe(b"real wav")
+    assert result["text"] == "Me llamo Ana"
+    assert result["word_confidences"] == [0.99, 0.96, 0.93]
+    assert result["unclear"] is False
 
 
 def test_real_speak_interface(monkeypatch):
@@ -110,15 +112,16 @@ def test_process_voice_answer_connects_stt_llm_and_tts(monkeypatch):
     monkeypatch.setattr(
         interfaces,
         "transcribe",
-        lambda wav: {
+        lambda wav, initial_prompt="": {
             "text": "Quiero una mesa",
             "word_confidences": [0.99, 0.98, 0.97],
+            "unclear": False,
         },
     )
     monkeypatch.setattr(
         interfaces,
         "configure_conversation",
-        lambda mode, level: None,
+        lambda mode, level, chapter_text="": None,
     )
     monkeypatch.setattr(
         interfaces,
@@ -151,7 +154,7 @@ def test_process_voice_answer_silence_skips_llm_and_tts(monkeypatch):
     monkeypatch.setattr(
         interfaces,
         "transcribe",
-        lambda wav: {"text": "", "word_confidences": []},
+        lambda wav, initial_prompt="": {"text": "", "word_confidences": [], "unclear": False},
     )
     monkeypatch.setattr(
         interfaces,

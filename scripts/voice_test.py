@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ["TUTOR_ADAPTER_MODE"] = "real"
 
 import interfaces
+from audio.pipeline import play_wav
 from books.ingest import ingest_book, list_chapters, process_chapter
 from books.quiz import generate_quiz
 from memory.database import Database
@@ -15,6 +16,18 @@ LEVEL = "A1"
 VOICE = "ef_dora"
 PDF_PATH = "scripts/spanish_dummy.pdf"
 DB_PATH = "data/tutor.db"
+
+
+import threading
+
+def speak_then_print(es: str, en: str) -> None:
+    """Speak the bilingual sentence, show it as caption."""
+    wav = interfaces.speak(es, VOICE)
+    threading.Thread(target=play_wav, args=(wav,), daemon=True).start()
+    print(f"Hernando : {es}")
+    if en:
+        print(f"          ({en})")
+    print()
 
 
 def pick_chapter(db: Database) -> str:
@@ -35,27 +48,18 @@ def main() -> None:
     print("\nSetting up tutor (first run downloads models — may take a few minutes)...")
     interfaces.configure_conversation(mode="real", level=LEVEL, chapter_text=chapter_text)
 
-    # Tutor speaks first
     print("\n=== Spanish Voice Tutor — Chapter lesson starting ===\n")
     opener = interfaces.generate_tutor_response("start")
-    print(f"Tutor ES : {opener['es']}")
-    print(f"Tutor EN : {opener['en']}")
     if opener["es"]:
-        interfaces.speak(opener["es"], VOICE)
-        from audio.pipeline import play_wav
-        play_wav(interfaces.speak(opener["es"], VOICE))
+        speak_then_print(opener["es"], opener["en"])
 
-    print("\nPress ENTER to speak, ENTER again to stop. Type 'quiz' for a quiz. Ctrl+C to quit.\n")
+    print("Press ENTER to speak, ENTER again to stop. Type 'quiz' for a quiz. Ctrl+C to quit.\n")
 
-    turn = 0
     while True:
-        cmd = input("[ Press ENTER to speak  |  type 'quiz' + ENTER for quiz ] ").strip().lower()
+        cmd = input("[ ENTER to speak  |  'quiz' for quiz ] ").strip().lower()
 
         if cmd == "quiz":
-            if not chapter_text.strip():
-                print("No chapter loaded — upload a PDF first.\n")
-                continue
-            print("Generating quiz from chapter...\n")
+            print("Generating quiz...\n")
             questions = generate_quiz(chapter_text, n_questions=3, level=LEVEL)
             if not questions:
                 print("Could not generate quiz (is Ollama running?).\n")
@@ -64,12 +68,11 @@ def main() -> None:
             for i, q in enumerate(questions, 1):
                 print(f"Q{i}: {q['question']}")
                 answer = input("Your answer: ").strip()
-                correct = q["answer"].strip().casefold()
-                if answer.strip().casefold() == correct:
-                    print("✓ Correct!\n")
+                if answer.casefold() == q["answer"].strip().casefold():
+                    print("Correct!\n")
                     score += 1
                 else:
-                    print(f"✗ Correct answer: {q['answer']}\n")
+                    print(f"Answer: {q['answer']}\n")
             print(f"Score: {score}/{len(questions)}\n")
             continue
 
@@ -78,17 +81,24 @@ def main() -> None:
         input()
 
         print("Processing...")
-        result = interfaces.stop_voice_answer(level=LEVEL, voice=VOICE, play_response=True)
+        result = interfaces.stop_voice_answer(level=LEVEL, voice=VOICE, play_response=False)
 
         if not result["learner_text"]:
             print("(no audio detected)\n")
             continue
 
-        turn += 1
-        print(f"\nYou said : {result['learner_text']}")
-        print(f"Tutor ES : {result['tutor_message']['es']}")
-        print(f"Tutor EN : {result['tutor_message']['en']}")
-        print()
+        print(f"\nYou    : {result['learner_text']}")
+
+        if result.get("unclear"):
+            # play the clarification audio (slow word), then show caption
+            if result["response_wav"]:
+                threading.Thread(target=play_wav, args=(result["response_wav"],), daemon=True).start()
+            msg = result["tutor_message"]
+            if msg["es"]:
+                print(f"Hernando : {msg['es']}")
+            print(f"          ({msg['en']})\n")
+        else:
+            speak_then_print(result["tutor_message"]["es"], result["tutor_message"]["en"])
 
 
 if __name__ == "__main__":

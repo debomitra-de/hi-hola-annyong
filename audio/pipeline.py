@@ -184,14 +184,18 @@ class WhisperTranscriber:
             )
         return self._model
 
-    def transcribe(self, wav_bytes: bytes) -> dict:
+    def transcribe(self, wav_bytes: bytes, initial_prompt: str = "") -> dict:
         converted = convert_wav(wav_bytes, 16_000, 1)
         audio, _sample_rate = sf.read(BytesIO(converted), dtype="float32")
         segments, info = self._get_model().transcribe(
             audio,
             language="es",
+            beam_size=5,
             word_timestamps=True,
             vad_filter=True,
+            condition_on_previous_text=False,
+            temperature=0.0,
+            initial_prompt=initial_prompt or None,
         )
 
         segment_list = list(segments)
@@ -202,10 +206,24 @@ class WhisperTranscriber:
                 confidence = getattr(word, "probability", 0.0)
                 words.append((word.word.strip(), float(confidence)))
 
+        # confidence signals for STT gate
+        avg_logprob = min((getattr(s, "avg_logprob", 0.0) for s in segment_list), default=0.0)
+        no_speech_prob = max((getattr(s, "no_speech_prob", 0.0) for s in segment_list), default=0.0)
+        compression_ratio = max((getattr(s, "compression_ratio", 1.0) for s in segment_list), default=1.0)
+        unclear = (
+            not segment_list
+            or avg_logprob < -0.8
+            or no_speech_prob > 0.6
+            or compression_ratio > 2.4
+        )
+
         return {
             "text": text,
             "words": words,
             "language": info.language,
+            "unclear": unclear,
+            "avg_logprob": avg_logprob,
+            "no_speech_prob": no_speech_prob,
         }
 
 
@@ -230,21 +248,49 @@ class KokoroSynthesizer:
             self._pipeline = KPipeline(lang_code=self.lang_code)
         return self._pipeline
 
-    def speak(self, text: str, voice: str | None = None) -> bytes:
+    def speak(self, text: str, voice: str | None = None, speed: float = 0.85) -> bytes:
         if not text.strip():
             raise ValueError("text cannot be empty")
 
         chunks = [
             audio
             for _, _, audio in self._get_pipeline()(
-                text,
+                text.strip() + ".",  # trailing punctuation prevents end-of-sentence cutoff
                 voice=voice or self.voice,
+                speed=speed,
             )
         ]
         if not chunks:
             return b""
 
-        combined = np.concatenate(chunks)
+        # append 200ms silence so the last phoneme isn't clipped on playback
+        silence = np.zeros(int(self.sample_rate * 0.2), dtype=np.float32)
+        combined = np.concatenate(chunks + [silence])
+        output = BytesIO()
+        sf.write(output, combined, self.sample_rate, format="WAV", subtype="PCM_16")
+        return output.getvalue()
+
+    def speak_clarification(self, heard: str, target: str, voice: str | None = None) -> bytes:
+        """Speak '¿[heard]? ... [target] ... [target]' — slow target sandwiched for pronunciation."""
+        v = voice or self.voice
+        parts = [
+            (f"¿{heard}?", 0.9),       # reflect back what was heard, normal pace
+            (target, 0.65),             # slow first pass — hear each syllable
+            (target, 0.9),              # normal speed — full word
+        ]
+        silence = np.zeros(int(self.sample_rate * 0.3))  # 300ms gap between parts
+        all_chunks: list[np.ndarray] = []
+        for text, speed in parts:
+            chunks = [a for _, _, a in self._get_pipeline()(text, voice=v, speed=speed)]
+            if chunks:
+                all_chunks.extend(chunks)
+                all_chunks.append(silence)
+        if not all_chunks:
+            return b""
+        combined = np.concatenate(all_chunks)
+        output = BytesIO()
+        sf.write(output, combined, self.sample_rate, format="WAV", subtype="PCM_16")
+        return output.getvalue()
         output = BytesIO()
         sf.write(
             output,

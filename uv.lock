@@ -1067,6 +1067,7 @@ dependencies = [
     { name = "phonemizer" },
     { name = "pydantic" },
     { name = "pymupdf" },
+    { name = "pyspellchecker" },
     { name = "python-multipart" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1097,6 +1098,7 @@ requires-dist = [
     { name = "phonemizer" },
     { name = "pydantic", specifier = ">=2" },
     { name = "pymupdf" },
+    { name = "pyspellchecker", specifier = ">=0.9.1" },
     { name = "python-multipart", specifier = ">=0.0.34" },
     { name = "scipy" },
     { name = "sounddevice" },
@@ -2657,6 +2659,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e4/11/b213bebff182584360cb8d17c72c1677fec5c5c228de439e63bcf8ab1c8f/pyparsing-3.3.3.tar.gz", hash = "sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36", size = 1050487, upload-time = "2026-09-20T20:59:05.609Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/38/bb/d215ee7c73b61497b28a5503f9f53523f294fcc936762b7caf90e0c1c2b5/pyparsing-3.3.3-py3-none-any.whl", hash = "sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4", size = 126420, upload-time = "2026-09-20T20:59:04.025Z" },
+]
+
+[[package]]
+name = "pyspellchecker"
+version = "0.9.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/95/d51ece11c06aeefac50dd64459ae1c565d2d43fe27f826bebc760ee950ed/pyspellchecker-0.9.1.tar.gz", hash = "sha256:786c21f082d4059b139bca922cd6db6c85c800374b904b59a8f61d75a0a62d7f", size = 7239938, upload-time = "2026-10-10T16:13:31.059Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/3b/558bc6def007152f0128ff0c8a6825708ac22bafdb295dc85cbec1f6ec22/pyspellchecker-0.9.1-py3-none-any.whl", hash = "sha256:c79b144b4bad20024bf489ad3ffd96b76f3f53439e9fa59ac607896352852f3d", size = 7237189, upload-time = "2026-10-10T16:13:29.045Z" },
 ]
 
 [[package]]

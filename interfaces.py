@@ -83,7 +83,7 @@ def _get_kokoro_synthesizer() -> Any:
     return _kokoro_synthesizer
 
 
-def transcribe(audio_bytes: bytes) -> dict:
+def transcribe(audio_bytes: bytes, initial_prompt: str = "") -> dict:
     if not isinstance(audio_bytes, bytes):
         raise TypeError("audio_bytes must be bytes")
     if not audio_bytes:
@@ -92,12 +92,14 @@ def transcribe(audio_bytes: bytes) -> dict:
         return {
             "text": "Hola, ¿cómo estás?",
             "word_confidences": [0.98, 0.95, 0.91],
+            "unclear": False,
         }
 
-    result = _get_whisper_transcriber().transcribe(audio_bytes)
+    result = _get_whisper_transcriber().transcribe(audio_bytes, initial_prompt=initial_prompt)
     return {
         "text": result["text"],
         "word_confidences": [confidence for _, confidence in result["words"]],
+        "unclear": result.get("unclear", False),
     }
 
 
@@ -156,8 +158,16 @@ def process_voice_answer(
     if level not in {"A1", "A2", "B1"}:
         raise ValueError("level must be A1, A2, or B1")
 
-    transcript = transcribe(wav)
+    # build initial_prompt from current lesson vocab to bias Whisper
+    initial_prompt = ""
+    if _conversation_engine is not None:
+        vocab = getattr(_conversation_engine, "_lesson_items", [])
+        taught = getattr(_conversation_engine, "_taught", [])
+        initial_prompt = " ".join(taught + vocab)
+
+    transcript = transcribe(wav, initial_prompt=initial_prompt)
     learner_text = transcript["text"].strip()
+
     if not learner_text:
         return {
             "learner_text": "",
@@ -169,12 +179,52 @@ def process_voice_answer(
                 "items": [],
             },
             "response_wav": b"",
+            "unclear": False,
         }
 
-    configure_conversation(
-        mode=get_audio_adapter_mode(),
-        level=level,
-    )
+    configure_conversation(mode=get_audio_adapter_mode(), level=level)
+
+    # STT gate — unclear audio triggers bilingual clarification, not LLM
+    if transcript.get("unclear"):
+        engine = _conversation_engine
+        if engine is not None:
+            tutor_msg, slow_word = engine.handle_unclear(learner_text)
+        else:
+            tutor_msg_dict = {
+                "kind": "system", "es": "", "items": [],
+                "en": "I didn't catch that. Try once more?",
+            }
+            return {
+                "learner_text": learner_text,
+                "transcript": transcript,
+                "tutor_message": tutor_msg_dict,
+                "response_wav": b"",
+                "unclear": True,
+            }
+
+        # speak clarification — reflects heard fragment + slow target word
+        if slow_word and tutor_msg.es.strip():
+            kokoro = _get_kokoro_synthesizer()
+            response_wav = kokoro.speak_clarification(
+                heard=learner_text.split()[-1] if learner_text.split() else "...",
+                target=slow_word,
+                voice=voice,
+            )
+        else:
+            response_wav = b""
+
+        if play_response and response_wav:
+            from audio.pipeline import play_wav
+            play_wav(response_wav)
+
+        return {
+            "learner_text": learner_text,
+            "transcript": transcript,
+            "tutor_message": tutor_msg.model_dump(),
+            "response_wav": response_wav,
+            "unclear": True,
+        }
+
     tutor_message = generate_tutor_response(learner_text)
     response_wav = speak(tutor_message["es"], voice)
 
@@ -182,7 +232,6 @@ def process_voice_answer(
         if not response_wav:
             raise RuntimeError("Tutor response did not produce audio")
         from audio.pipeline import play_wav
-
         play_wav(response_wav)
 
     return {
@@ -190,6 +239,7 @@ def process_voice_answer(
         "transcript": transcript,
         "tutor_message": tutor_message,
         "response_wav": response_wav,
+        "unclear": False,
     }
 
 
