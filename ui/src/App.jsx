@@ -4,11 +4,16 @@ import Quiz from './screens/Quiz'
 
 export default function App() {
   const [screen, setScreen] = useState('lesson')
+  const [quizTopic, setQuizTopic] = useState('')
 
   return (
     <>
-      {screen === 'lesson' && <Lesson onQuiz={() => setScreen('quiz')} />}
-      {screen === 'quiz'   && <Quiz   onHome={() => setScreen('lesson')} />}
+      {screen === 'lesson' && (
+        <Lesson onQuiz={(topic) => { setQuizTopic(topic); setScreen('quiz') }} />
+      )}
+      {screen === 'quiz' && (
+        <Quiz topic={quizTopic} onHome={() => setScreen('lesson')} />
+      )}
     </>
   )
 }

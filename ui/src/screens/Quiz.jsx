@@ -40,7 +40,35 @@ const QUESTIONS = [
 const NEW_WORDS  = ['la manzana', 'beber', 'el restaurante', 'la cuenta', 'quiero']
 const REVIEW_ITEMS = ['Numbers 11–20', 'Ser vs. Estar']
 
-export default function Quiz({ onHome }) {
+function QuizSidebar({ topic, current, results, total, onHome }) {
+  return (
+    <div className="quiz-sidebar">
+      <button className="back-btn" onClick={onHome} style={{ alignSelf: 'flex-start' }}>←</button>
+      <div className="quiz-sidebar-topic">{topic || 'Quiz'}</div>
+      <div className="quiz-sidebar-sub">Question {current + 1} of {total}</div>
+      <div className="quiz-nav-list">
+        {Array.from({ length: total }, (_, i) => {
+          let status = ''
+          if (i < results.length) status = results[i] ? 'done' : 'wrong'
+          else if (i === current) status = 'curr'
+          return (
+            <div key={i} className={`quiz-nav-item ${status}`}>
+              <span className="quiz-nav-num">
+                {i < results.length ? (results[i] ? '✓' : '✗') : i + 1}
+              </span>
+              <span className="quiz-nav-label">Question {i + 1}</span>
+              {i < results.length && (
+                <span className="quiz-nav-status">{results[i] ? '✓' : '✗'}</span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+export default function Quiz({ onHome, topic }) {
   const [current, setCurrent] = useState(0)
   const [selected, setSelected] = useState(null)
   const [fillVal, setFillVal] = useState('')
@@ -74,11 +102,19 @@ export default function Quiz({ onHome }) {
   if (done) {
     const pct = Math.round((score / QUESTIONS.length) * 100)
     return (
-      <>
-        <div className="page-header">
-          <div>
-            <div className="page-title">Quiz Results</div>
-            <div className="page-sub">Food &amp; Drinks · Chapter 3</div>
+      <div className="quiz-screen">
+        <div className="quiz-sidebar">
+          <button className="back-btn" onClick={onHome} style={{ alignSelf: 'flex-start' }}>←</button>
+          <div className="quiz-sidebar-topic">{topic || 'Quiz'}</div>
+          <div className="quiz-sidebar-sub">Completed</div>
+          <div className="quiz-nav-list">
+            {results.map((r, i) => (
+              <div key={i} className={`quiz-nav-item ${r ? 'done' : 'wrong'}`}>
+                <span className="quiz-nav-num">{i + 1}</span>
+                <span className="quiz-nav-label">Question {i + 1}</span>
+                <span className="quiz-nav-status">{r ? '✓' : '✗'}</span>
+              </div>
+            ))}
           </div>
         </div>
         <div className="quiz-results">
@@ -107,32 +143,21 @@ export default function Quiz({ onHome }) {
             <button className="btn-ghost" onClick={onHome}>Back to home</button>
           </div>
         </div>
-      </>
+      </div>
     )
   }
 
   return (
-    <>
-      <div className="page-header">
-        <div>
-          <div className="page-title">Food &amp; Drinks Quiz</div>
-          <div className="page-sub">Question {current + 1} of {QUESTIONS.length}</div>
-        </div>
-        <div className="page-header-right">
-          <button className="back-btn" onClick={onHome}>←</button>
-        </div>
-      </div>
+    <div className="quiz-screen">
+      <QuizSidebar
+        topic={topic}
+        current={current}
+        results={results}
+        total={QUESTIONS.length}
+        onHome={onHome}
+      />
 
       <div className="quiz-content">
-        <div className="quiz-progress-dots">
-          {QUESTIONS.map((_, i) => {
-            let cls = ''
-            if (i < results.length)  cls = results[i] ? 'done' : 'wrong'
-            else if (i === current)  cls = 'curr'
-            return <div key={i} className={`q-dot ${cls}`} />
-          })}
-        </div>
-
         <div className="question-card">
           <div className="q-type-badge"><span>{q.typeIcon}</span><span>{q.type}</span></div>
           <div className="q-text">{q.q}</div>
@@ -159,13 +184,13 @@ export default function Quiz({ onHome }) {
               {q.choices.map((c, i) => {
                 let cls = ''
                 if (answered) {
-                  if (i === q.answer)                cls = 'correct'
-                  else if (i === selected)           cls = 'wrong'
+                  if (i === q.answer)              cls = 'correct'
+                  else if (i === selected)         cls = 'wrong'
                 }
                 return (
                   <button key={i} className={`choice ${cls}`} onClick={() => handleChoice(i)} disabled={answered}>
                     <span>{c}</span>
-                    {answered && i === q.answer           && <span className="choice-check">✓</span>}
+                    {answered && i === q.answer               && <span className="choice-check">✓</span>}
                     {answered && i === selected && i !== q.answer && <span className="choice-check">✗</span>}
                   </button>
                 )
@@ -190,6 +215,6 @@ export default function Quiz({ onHome }) {
           </div>
         )}
       </div>
-    </>
+    </div>
   )
 }
