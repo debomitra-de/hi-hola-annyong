@@ -9,6 +9,7 @@ import soundfile as sf
 
 from audio.pipeline import (
     AudioRecorder,
+    WhisperTranscriber,
     convert_wav,
     play_wav,
     record_wav,
@@ -155,6 +156,23 @@ def test_play_wav_calls_audio_device(monkeypatch):
     assert calls["sample_rate"] == 16_000
     assert calls["waited"] is True
     assert calls["audio"].size > 0
+
+
+def test_whisper_auto_detects_language_without_initial_prompt(monkeypatch):
+    captured = {}
+
+    class MockModel:
+        def transcribe(self, audio, **kwargs):
+            captured.update(kwargs)
+            return iter([]), SimpleNamespace(language="en")
+
+    transcriber = WhisperTranscriber()
+    monkeypatch.setattr(transcriber, "_get_model", lambda: MockModel())
+
+    transcriber.transcribe(make_wav(sample_rate=16_000))
+
+    assert captured["language"] is None
+    assert captured["initial_prompt"] is None
 
 
 def test_missing_portaudio_reports_clear_error(monkeypatch):

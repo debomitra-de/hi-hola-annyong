@@ -98,6 +98,7 @@ def _get_kokoro_synthesizer() -> Any:
 
 
 def transcribe(audio_bytes: bytes, initial_prompt: str = "") -> dict:
+    del initial_prompt  # STT must preserve the speaker's languages rather than lesson-biasing text
     if not isinstance(audio_bytes, bytes):
         raise TypeError("audio_bytes must be bytes")
     if not audio_bytes:
@@ -109,7 +110,7 @@ def transcribe(audio_bytes: bytes, initial_prompt: str = "") -> dict:
             "unclear": False,
         }
 
-    result = _get_whisper_transcriber().transcribe(audio_bytes, initial_prompt=initial_prompt)
+    result = _get_whisper_transcriber().transcribe(audio_bytes)
     return {
         "text": result["text"],
         "word_confidences": [confidence for _, confidence in result["words"]],
@@ -178,14 +179,7 @@ def process_voice_answer(
             level=level,
         )
 
-    # build initial_prompt from current lesson vocab to bias Whisper
-    initial_prompt = ""
-    if _conversation_engine is not None:
-        vocab = getattr(_conversation_engine, "_lesson_items", [])
-        taught = getattr(_conversation_engine, "_taught", [])
-        initial_prompt = " ".join(taught + vocab)
-
-    transcript = transcribe(wav, initial_prompt=initial_prompt)
+    transcript = transcribe(wav)
     learner_text = transcript["text"].strip()
 
     if not learner_text:

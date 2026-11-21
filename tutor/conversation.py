@@ -67,7 +67,7 @@ class OllamaLLM:
         model: str = "qwen2.5:3b",
         url: str = "http://localhost:11434/api/chat",
         timeout_seconds: float = 120,
-        temperature: float = 0.2,
+        temperature: float = 0.3,
     ) -> None:
         self.model = model
         self.url = url
@@ -171,6 +171,10 @@ This is a real conversation, not a scripted monologue.
 
 CORE ROLE
 - Stay grounded in the lesson goal and topic. Do not switch to a new subject.
+- Speak directly to the learner. Use "you", "I", and "we" as appropriate.
+  Never refer to "the learner", "your partner", "a companion", or another person.
+- Use short conversational prompts such as "Let’s try", "What would you say?",
+  or "Can you use this with me?" Never turn the exercise into a group activity.
 - Correct mistakes gently, briefly, and concretely. Give the natural Spanish form,
   explain only the key difference in English if useful, then invite one short retry.
 - Valid answers and close semantic equivalents count as successful attempts.
@@ -373,6 +377,17 @@ class ConversationEngine:
             return f"`es` has {word_count} words; max is 12. Shorten it."
         if not message.en.strip():
             return "`en` cannot be empty."
+        third_person_patterns = (
+            r"\btu compañero\b",
+            r"\btus compañeros\b",
+            r"\bcon un compañero\b",
+            r"\bel alumno\b",
+            r"\bla alumna\b",
+            r"\bthe learner\b",
+        )
+        if any(re.search(pattern, f"{message.es} {message.en}", re.IGNORECASE)
+               for pattern in third_person_patterns):
+            return "Speak directly to me; do not involve a partner or third person."
         return None
 
     def chat(self, learner_text: str) -> TutorMessage:

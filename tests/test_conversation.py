@@ -5,6 +5,7 @@ from tutor.conversation import (
     ConversationResponse,
     MockLLM,
     OllamaLLM,
+    TutorMessage,
 )
 
 
@@ -77,6 +78,21 @@ def test_matching_attempt_advances_and_preserves_recent_mistakes():
 
     assert engine._last_attempt_status == "success"
     assert engine._mistakes[first_target] == 0
+
+
+def test_third_person_practice_prompt_is_rejected():
+    engine = ConversationEngine(MockLLM(), level="A1")
+    message = TutorMessage(
+        kind="prompt",
+        es="Practica pedir comida con tu compañero.",
+        en="Practice ordering food with your partner.",
+        items=[],
+    )
+
+    error = engine._validate(message)
+
+    assert error is not None
+    assert "directly" in error
 
 
 def test_conversation_history_is_bounded():

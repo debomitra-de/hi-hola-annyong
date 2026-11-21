@@ -61,6 +61,23 @@ class Database:
                 }
                 if "page_count" not in columns:
                     conn.execute("ALTER TABLE books ADD COLUMN page_count INTEGER")
+                if "file_hash" not in columns:
+                    conn.execute("ALTER TABLE books ADD COLUMN file_hash TEXT")
+                if "original_filename" not in columns:
+                    conn.execute("ALTER TABLE books ADD COLUMN original_filename TEXT")
+                migrated_columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(books)")
+                }
+                if {"sha256", "filename", "file_hash", "original_filename"} <= migrated_columns:
+                    conn.execute(
+                        """
+                        UPDATE books
+                        SET file_hash = COALESCE(file_hash, sha256),
+                            original_filename = COALESCE(original_filename, filename)
+                        WHERE file_hash IS NULL OR original_filename IS NULL
+                        """
+                    )
 
             if "session_state" in tables:
                 columns = {
@@ -497,25 +514,55 @@ class Database:
     ) -> int:
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO books (
-                       file_hash, original_filename, stored_path, page_count, uploaded_at
-                   ) VALUES (?, ?, ?, ?, ?)""",
-                (
-                    file_hash,
-                    original_filename,
-                    stored_path,
-                    page_count,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(books)")
+            }
+            uploaded_at = datetime.now(UTC).isoformat()
+            if {"sha256", "filename"} <= columns:
+                cursor.execute(
+                    """INSERT INTO books (
+                           sha256, filename, stored_path, page_count, uploaded_at,
+                           file_hash, original_filename
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        file_hash,
+                        original_filename,
+                        stored_path,
+                        page_count,
+                        uploaded_at,
+                        file_hash,
+                        original_filename,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """INSERT INTO books (
+                           file_hash, original_filename, stored_path, page_count, uploaded_at
+                       ) VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        file_hash,
+                        original_filename,
+                        stored_path,
+                        page_count,
+                        uploaded_at,
+                    ),
+                )
             conn.commit()
             return cursor.lastrowid
 
     def get_book_by_hash(self, file_hash: str) -> dict[str, Any] | None:
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM books WHERE file_hash = ?", (file_hash,))
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(books)")
+            }
+            hash_column = "file_hash" if "file_hash" in columns else "sha256"
+            cursor.execute(
+                f"SELECT * FROM books WHERE {hash_column} = ?",
+                (file_hash,),
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
 
@@ -589,14 +636,20 @@ class Database:
             row = cursor.fetchone()
             if row:
                 return dict(row)
-            return {"chapter_id": chapter_id, "sessions_completed": 0, "mastery_estimate": 0.0, "last_studied": None}
+            return {
+                "chapter_id": chapter_id,
+                "sessions_completed": 0,
+                "mastery_estimate": 0.0,
+                "last_studied": None,
+            }
 
     def update_chapter_progress(self, chapter_id: int, mastery_delta: float = 0.0) -> None:
         now = datetime.now(UTC).isoformat()
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                """INSERT INTO chapter_progress (chapter_id, sessions_completed, mastery_estimate, last_studied)
+                """INSERT INTO chapter_progress
+                   (chapter_id, sessions_completed, mastery_estimate, last_studied)
                    VALUES (?, 1, ?, ?)
                    ON CONFLICT(chapter_id) DO UPDATE SET
                        sessions_completed = sessions_completed + 1,
