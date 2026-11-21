@@ -5,6 +5,7 @@ _pronunciation_scorer: Any = None
 _whisper_transcriber: Any = None
 _kokoro_synthesizer: Any = None
 _conversation_engine: Any = None
+_conversation_engine_key: tuple[Any, ...] | None = None
 _audio_recorder: Any = None
 PRONUNCIATION_ENABLED = False
 _checkpoints: dict[str, Any] = {}
@@ -28,12 +29,19 @@ def configure_conversation(
     mode: str = "fake",
     level: str = "A1",
     chapter_text: str = "",
+    topic: str = "conversation",
+    session_id: int | str | None = None,
 ) -> None:
-    global _conversation_engine
+    global _conversation_engine, _conversation_engine_key
     if mode not in {"fake", "real"}:
         raise ValueError("mode must be 'fake' or 'real'")
     if level not in {"A1", "A2", "B1"}:
         raise ValueError("level must be A1, A2, or B1")
+
+    key = (session_id, mode, level, topic, chapter_text)
+    if _conversation_engine is not None and _conversation_engine_key == key:
+        os.environ["TUTOR_LLM_MODE"] = mode
+        return
 
     if mode == "real":
         from tutor.conversation import ConversationEngine, OllamaLLM
@@ -43,7 +51,13 @@ def configure_conversation(
         from tutor.conversation import ConversationEngine, MockLLM
 
         llm = MockLLM()
-    _conversation_engine = ConversationEngine(llm=llm, level=level, chapter_text=chapter_text)
+    _conversation_engine = ConversationEngine(
+        llm=llm,
+        level=level,
+        chapter_text=chapter_text,
+        topic=topic,
+    )
+    _conversation_engine_key = key
     os.environ["TUTOR_LLM_MODE"] = mode
 
 
@@ -158,6 +172,12 @@ def process_voice_answer(
     if level not in {"A1", "A2", "B1"}:
         raise ValueError("level must be A1, A2, or B1")
 
+    if _conversation_engine is None:
+        configure_conversation(
+            mode=get_audio_adapter_mode(),
+            level=level,
+        )
+
     # build initial_prompt from current lesson vocab to bias Whisper
     initial_prompt = ""
     if _conversation_engine is not None:
@@ -181,8 +201,6 @@ def process_voice_answer(
             "response_wav": b"",
             "unclear": False,
         }
-
-    configure_conversation(mode=get_audio_adapter_mode(), level=level)
 
     # STT gate — unclear audio triggers bilingual clarification, not LLM
     if transcript.get("unclear"):

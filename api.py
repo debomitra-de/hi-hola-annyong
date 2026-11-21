@@ -137,7 +137,11 @@ def create_session(body: SessionCreate) -> SessionResponse:
         current_turn=0,
         plan_json="{}",
         mode="lesson",
-        state_data=json.dumps({"chapter_text": chapter_text, "level": body.level}),
+        state_data=json.dumps({
+            "chapter_text": chapter_text,
+            "level": body.level,
+            "topic": source_ref,
+        }),
     )
 
     # pre-configure the conversation engine with chapter context
@@ -145,6 +149,8 @@ def create_session(body: SessionCreate) -> SessionResponse:
         mode=interfaces.get_audio_adapter_mode(),
         level=body.level,
         chapter_text=chapter_text,
+        topic=source_ref,
+        session_id=sid,
     )
 
     return SessionResponse(
@@ -180,22 +186,50 @@ def _chapter_text_for_session(session_id: int) -> str:
         return ""
 
 
+def _session_context(session_id: int) -> dict[str, Any]:
+    ckpt = _get_db().load_checkpoint(session_id)
+    if not ckpt:
+        return {"chapter_text": "", "topic": "conversation", "level": "A1"}
+    try:
+        state = json.loads(ckpt.get("state_data") or "{}")
+    except (json.JSONDecodeError, AttributeError):
+        state = {}
+    return {
+        "chapter_text": state.get("chapter_text", ""),
+        "topic": state.get("topic", "conversation"),
+        "level": state.get("level", "A1"),
+    }
+
+
+def _next_turn_step(session_id: int) -> int:
+    ckpt = _get_db().load_checkpoint(session_id)
+    if not ckpt:
+        return 1
+    try:
+        return int(ckpt.get("step", 0)) + 1
+    except (TypeError, ValueError):
+        return 1
+
+
 @app.post("/sessions/{session_id}/turns/text", response_model=TextTurnResponse)
 def text_turn(session_id: int, body: TextTurnRequest) -> TextTurnResponse:
     if not body.learner_text.strip():
         raise HTTPException(status_code=422, detail="learner_text cannot be empty")
 
+    context = _session_context(session_id)
     interfaces.configure_conversation(
         mode=interfaces.get_audio_adapter_mode(),
         level=body.level,
-        chapter_text=_chapter_text_for_session(session_id),
+        chapter_text=context["chapter_text"],
+        topic=context["topic"],
+        session_id=session_id,
     )
     tutor_msg = interfaces.generate_tutor_response(body.learner_text)
 
     db = _get_db()
     db.record_turn(
         session_id=session_id,
-        step=0,  # caller may supply step via query param if needed; 0 = auto
+        step=_next_turn_step(session_id),
         exercise_json=json.dumps({"type": "text"}),
         answer_text=body.learner_text,
         stt_conf=None,
@@ -218,10 +252,13 @@ async def voice_turn(session_id: int, audio: UploadFile = File(...), level: str 
     if not wav:
         raise HTTPException(status_code=422, detail="audio file is empty")
 
+    context = _session_context(session_id)
     interfaces.configure_conversation(
         mode=interfaces.get_audio_adapter_mode(),
         level=level,
-        chapter_text=_chapter_text_for_session(session_id),
+        chapter_text=context["chapter_text"],
+        topic=context["topic"],
+        session_id=session_id,
     )
     result = interfaces.process_voice_answer(wav, level=level, voice="ef_dora")
 
@@ -233,7 +270,7 @@ async def voice_turn(session_id: int, audio: UploadFile = File(...), level: str 
     db = _get_db()
     db.record_turn(
         session_id=session_id,
-        step=0,
+        step=_next_turn_step(session_id),
         exercise_json=json.dumps({"type": "voice"}),
         answer_text=result["learner_text"],
         stt_conf=stt_conf,

@@ -48,6 +48,37 @@ def test_empty_learner_answer_does_not_add_history():
     assert len(engine.history) == history_size
 
 
+def test_wrong_attempt_is_grounded_and_keeps_current_target():
+    engine = ConversationEngine(
+        MockLLM(),
+        level="A1",
+        chapter_text="Hola casa comida.",
+        topic="Ordering food",
+    )
+    target = engine._current_target()
+
+    engine.chat("No entiendo nada")
+
+    assert engine._last_attempt_status == "failed"
+    assert engine._mistakes[target] == 1
+    assert engine._current_target() == target
+    assert "<topic>Ordering food</topic>" in engine.history[0]["content"]
+
+
+def test_matching_attempt_advances_and_preserves_recent_mistakes():
+    engine = ConversationEngine(
+        MockLLM(),
+        level="A1",
+        chapter_text="Hola casa comida.",
+    )
+    first_target = engine._current_target()
+
+    engine.chat(first_target)
+
+    assert engine._last_attempt_status == "success"
+    assert engine._mistakes[first_target] == 0
+
+
 def test_conversation_history_is_bounded():
     engine = ConversationEngine(
         MockLLM(),
