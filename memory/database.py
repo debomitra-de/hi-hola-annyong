@@ -505,6 +505,34 @@ class Database:
     # Books
     # ------------------------------------------------------------------
 
+    def get_session_turns(self, session_id: int) -> list[dict]:
+        """Return all turns for a session, ordered by step."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT step, answer_text, feedback_json FROM turns WHERE session_id = ? ORDER BY step",
+                (session_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_sessions(self, limit: int = 5) -> list[dict]:
+        """Return the most recent sessions with their checkpoint state."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """SELECT s.id, s.source_type, s.level,
+                          ss.step, ss.updated_at,
+                          CASE WHEN s.source_type = 'chapter'
+                               THEN COALESCE(c.title, s.source_ref)
+                               ELSE s.source_ref
+                          END AS display_name
+                   FROM sessions s
+                   LEFT JOIN session_state ss ON ss.session_id = s.id
+                   LEFT JOIN chapters c ON c.id = CAST(s.source_ref AS INTEGER)
+                       AND s.source_type = 'chapter'
+                   ORDER BY s.id DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def insert_book(
         self,
         file_hash: str,

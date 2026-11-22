@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
@@ -318,18 +318,20 @@ async function blobToWav(blob) {
 }
 
 const THINKING_PHRASES = [
-  'Déjame pensar… 🤔 (let me think…)',
-  'Un momento… casa 🏠, perro 🐕, gato 🐱',
-  'Pensando… intenta decir: "¿cómo estás?"',
-  'Preparando respuesta… 🎲 libro, mesa, agua',
-  'Hmm… ¿sabes la palabra "amigo"? 👋',
+  { es: '💡 "el agua" es femenino pero usa "el"', en: '"el agua" (water) is feminine but takes the masculine article — a quirk of Spanish!' },
+  { es: '💡 "ser" es permanente, "estar" es temporal', en: '"ser" = permanent traits (I am tall); "estar" = temporary states (I am tired)' },
+  { es: '💡 En español, los adjetivos van después del sustantivo', en: 'Adjectives usually come after the noun: "casa roja" (red house), not "roja casa"' },
+  { es: '💡 "tú" es informal, "usted" es formal', en: '"tú" = you (friends/family); "usted" = you (formal/respectful)' },
+  { es: '💡 Los días de la semana no se escriben con mayúscula', en: 'Days of the week are lowercase in Spanish: lunes, martes, miércoles…' },
+  { es: '💡 "hay" significa "there is" y "there are"', en: '"hay" covers both singular and plural: "hay un gato" / "hay dos gatos"' },
+  { es: '💡 Los números del 1 al 10: uno, dos, tres, cuatro, cinco…', en: 'Numbers 1–10: one, two, three, four, five, six, seven, eight, nine, ten' },
 ]
 
 export default function Lesson({ onQuiz }) {
   const [topic, setTopic] = useState('')
   const [pdf, setPdf] = useState(null)
-  const [chapter, setChapter] = useState('')      // display title
-  const [chapterId, setChapterId] = useState(null) // numeric id for API
+  const [chapter, setChapter] = useState('')
+  const [chapterId, setChapterId] = useState(null)
   const [chapters, setChapters] = useState([])
   const [lessonActive, setLessonActive] = useState(false)
   const [captionOn, setCaptionOn] = useState(false)
@@ -337,6 +339,10 @@ export default function Lesson({ onQuiz }) {
   const [charState, setCharState] = useState('idle')
   const [bubbleText, setBubbleText] = useState(null)
   const [bubbleEn, setBubbleEn] = useState(null)
+  const [isThinking, setIsThinking] = useState(false)
+  const [thinkingFact, setThinkingFact] = useState(THINKING_PHRASES[0])
+  const [errorMsg, setErrorMsg] = useState(null)
+  const [lastSession, setLastSession] = useState(null)  // { id, source_ref, level, step }
 
   const analyserRef      = useRef(null)
   const audioRef         = useRef(null)
@@ -346,8 +352,18 @@ export default function Lesson({ onQuiz }) {
   const silenceTimerRef  = useRef(null)
   const charStateRef     = useRef('idle')
   const sessionIdRef     = useRef(null)
+  const audioPlayingRef  = useRef(false)  // true while Hernando's TTS audio is playing
+  const openerInFlightRef = useRef(false)  // guard against double opener calls
 
   charStateRef.current = charState
+
+  // Fetch last session on mount for the resume card
+  useEffect(() => {
+    fetch('/api/sessions?limit=1')
+      .then(r => r.ok ? r.json() : [])
+      .then(sessions => { if (sessions.length) setLastSession(sessions[0]) })
+      .catch(() => {})
+  }, [])
 
   const progress    = 0
   const canStart    = topic.trim() || chapter
@@ -362,8 +378,11 @@ export default function Lesson({ onQuiz }) {
   // ── Session ──────────────────────────────────────────────────────────────
 
   async function handleStartLesson() {
+    if (openerInFlightRef.current) return
+    openerInFlightRef.current = true
     setLessonActive(true)
     setCharState('idle')
+    setErrorMsg(null)
 
     try {
       const body = {
@@ -380,9 +399,82 @@ export default function Lesson({ onQuiz }) {
       if (res.ok) {
         const data = await res.json()
         sessionIdRef.current = data.session_id
+        setTopic('')
+        console.log('[session] created — id', data.session_id)
+
+        // Ask Hernando to open the lesson
+        console.log('[opener] requesting opening line …')
+        try {
+          const openerRes = await fetch(`/api/sessions/${data.session_id}/opener`, { method: 'POST' })
+          if (openerRes.ok) {
+            const opener = await openerRes.json()
+            console.log('[opener] received — es:', opener.tutor_message?.es)
+            if (opener.tutor_message?.es) setBubbleText(opener.tutor_message.es)
+            if (opener.tutor_message?.en) setBubbleEn(opener.tutor_message.en)
+            if (opener.audio_b64 && audioRef.current) {
+              const bytes = Uint8Array.from(atob(opener.audio_b64), c => c.charCodeAt(0))
+              const isWav = bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70 && bytes[3] === 70
+              if (isWav) {
+                const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
+                audioRef.current.src = url
+                audioRef.current.play().catch(() => { console.warn('[opener] autoplay blocked'); setCharState('idle') })
+              } else {
+                console.warn('[opener] audio not WAV (fake mode?) — skipping playback')
+                setCharState('idle')
+              }
+            } else {
+              console.warn('[opener] no audio returned')
+              setCharState('idle')
+            }
+          } else {
+            console.error('[opener] failed —', await openerRes.text())
+            setCharState('idle')
+          }
+        } catch (err) {
+          console.error('[opener] error —', err)
+          setCharState('idle')
+        }
+      } else {
+        const detail = await res.text()
+        setErrorMsg(`Could not start session: ${detail}`)
+        setLessonActive(false)
       }
     } catch (err) {
-      console.error('Session create failed:', err)
+      setErrorMsg('Could not reach the server. Is the backend running?')
+      setLessonActive(false)
+    } finally {
+      openerInFlightRef.current = false
+    }
+  }
+
+  async function handleResume() {
+    if (openerInFlightRef.current) return
+    openerInFlightRef.current = true
+    if (!lastSession) return
+    setLessonActive(true)
+    setCharState('idle')
+    setErrorMsg(null)
+    sessionIdRef.current = lastSession.id
+    console.log('[resume] session id', lastSession.id)
+    try {
+      const openerRes = await fetch(`/api/sessions/${lastSession.id}/opener`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: 'resume' }) })
+      if (openerRes.ok) {
+        const opener = await openerRes.json()
+        if (opener.tutor_message?.es) setBubbleText(opener.tutor_message.es)
+        if (opener.tutor_message?.en) setBubbleEn(opener.tutor_message.en)
+        if (opener.audio_b64 && audioRef.current) {
+          const bytes = Uint8Array.from(atob(opener.audio_b64), c => c.charCodeAt(0))
+          if (bytes[0] === 82 && bytes[1] === 73) {
+            audioRef.current.src = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
+            audioRef.current.play().catch(() => setCharState('idle'))
+          } else { setCharState('idle') }
+        } else { setCharState('idle') }
+      } else { setCharState('idle') }
+    } catch (err) {
+      console.error('[resume] error', err)
+      setCharState('idle')
+    } finally {
+      openerInFlightRef.current = false
     }
   }
 
@@ -422,6 +514,7 @@ export default function Lesson({ onQuiz }) {
       return
     }
     if (charStateRef.current === 'speaking') return
+    if (audioPlayingRef.current) return  // block mic while Hernando's audio is playing
 
     if (!sessionIdRef.current) {
       await handleStartLesson()
@@ -456,14 +549,16 @@ export default function Lesson({ onQuiz }) {
         mediaRecorderRef.current = recorder
         setCharState('listening')
 
-        // Silence detection — stop after 1.5 s of quiet
+        // Silence detection — only kicks in after 2s minimum, stops after 1.5s of quiet
         const buf = new Uint8Array(analyser.frequencyBinCount)
         let silenceStart = null
+        const recordingStart = Date.now()
         const checkSilence = () => {
           if (!mediaRecorderRef.current || mediaRecorderRef.current.state !== 'recording') return
           analyser.getByteTimeDomainData(buf)
           const rms = Math.sqrt(buf.reduce((s, v) => s + (v - 128) ** 2, 0) / buf.length)
-          if (rms < 5) {
+          const elapsed = Date.now() - recordingStart
+          if (rms < 5 && elapsed > 2000) {
             if (!silenceStart) silenceStart = Date.now()
             else if (Date.now() - silenceStart > 1500) { stopRecording(); return }
           } else {
@@ -492,65 +587,72 @@ export default function Lesson({ onQuiz }) {
   // ── Voice turn ─────────────────────────────────────────────────────────
 
   async function sendVoiceToBackend(blob) {
-    setCharState('speaking')
     const sid = sessionIdRef.current
-    if (!sid) { setCharState('idle'); return }
+    if (!sid) { console.error('[voice] no session id — aborting'); setCharState('idle'); return }
 
-    // Show a fun Spanish placeholder while the backend processes
-    const thinking = THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)]
-    setBubbleText(thinking)
-    setBubbleEn(null)
+    console.log('[voice] converting blob to WAV …')
+    setIsThinking(true)
+    setThinkingFact(THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)])
+    // Hernando's last bubble stays visible while we wait — thinking fact shows as subtitle
 
     let wavBlob
     try {
       wavBlob = await blobToWav(blob)
+      console.log('[voice] WAV ready —', wavBlob.size, 'bytes')
     } catch (err) {
-      console.error('WAV conversion failed:', err)
+      console.error('[voice] WAV conversion failed:', err)
       setCharState('idle')
       return
     }
 
     const formData = new FormData()
     formData.append('audio', wavBlob, 'recording.wav')
-    formData.append('level', 'A1')
 
+    console.log('[voice] sending to backend …')
     try {
-      const res = await fetch(`/api/sessions/${sid}/turns/voice`, {
+      const res = await fetch(`/api/sessions/${sid}/turns/voice?level=A1`, {
         method: 'POST',
         body: formData,
       })
-      if (!res.ok) { console.error('voice turn failed:', await res.text()); setCharState('idle'); return }
+      if (!res.ok) { console.error('[voice] turn failed:', await res.text()); setCharState('idle'); return }
       const data = await res.json()
+      console.log('[voice] response — es:', data.tutor_message?.es, '| unclear:', data.tutor_message?.kind)
 
+      setIsThinking(false)
       if (data.tutor_message?.es) setBubbleText(data.tutor_message.es)
       if (data.tutor_message?.en) setBubbleEn(data.tutor_message.en)
 
       if (data.audio_b64 && audioRef.current) {
         const bytes = Uint8Array.from(atob(data.audio_b64), c => c.charCodeAt(0))
-        // Check it's real WAV (not fake_audio_data from fake mode)
         const isWav = bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70 && bytes[3] === 70
-        if (!isWav) { setCharState('idle'); return }
+        if (!isWav) { console.warn('[voice] audio not WAV — skipping playback'); setCharState('idle'); return }
+        console.log('[voice] playing audio —', bytes.length, 'bytes')
         const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
         audioRef.current.src = url
-        audioRef.current.play().catch(() => setCharState('idle'))
+        audioRef.current.play().catch(e => { console.warn('[voice] autoplay blocked:', e); setCharState('idle') })
       } else {
+        console.warn('[voice] no audio in response')
         setCharState('idle')
       }
     } catch (err) {
-      console.error('voice turn error:', err)
+      console.error('[voice] turn error:', err)
+      setIsThinking(false)
       setCharState('idle')
     }
   }
 
   function handleAudioPlay(e) {
     createAnalyserFromAudio(e.target, analyserRef)
+    audioPlayingRef.current = true
     setCharState('speaking')
   }
 
   function handleAudioEnded(e) {
     if (e.target.src?.startsWith('blob:')) URL.revokeObjectURL(e.target.src)
     setCharState('idle')
-    setTimeout(() => startListening(), 600)
+    // Keep mic blocked for 800ms after audio ends so residual speaker sound
+    // doesn't get picked up when the user taps mic immediately after
+    setTimeout(() => { audioPlayingRef.current = false }, 800)
   }
 
   const statusLabel = {
@@ -592,7 +694,9 @@ export default function Lesson({ onQuiz }) {
             <div className={`s-dot ${charState === 'speaking' ? 's-dot--active' : ''}`} />
             <div className={`s-dot ${charState === 'speaking' ? 's-dot--active' : ''}`} />
           </div>
-          <div className="speaking-label">{statusLabel}</div>
+          {charState !== 'speaking' && (
+            <div className="speaking-label">{statusLabel}</div>
+          )}
         </div>
         {lessonActive && <ProgressRing pct={progress} />}
       </div>
@@ -603,11 +707,23 @@ export default function Lesson({ onQuiz }) {
         <div className="panel-heading">¿Qué quieres aprender?</div>
         <div className="panel-sub">Pick up where you left off or start something new</div>
 
-        <div className="resume-card-sm">
+        {errorMsg && (
+          <div className="error-banner" style={{ color: '#dc2626', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 14 }}>
+            {errorMsg}
+          </div>
+        )}
+
+        <div
+          className="resume-card-sm"
+          onClick={lastSession ? handleResume : undefined}
+          style={lastSession ? { cursor: 'pointer' } : { opacity: 0.5 }}
+        >
           <div className="resume-icon-sm">▶</div>
           <div>
             <div className="resume-title-sm">Resume</div>
-            <div className="resume-sub-sm">No previous session yet</div>
+            <div className="resume-sub-sm">
+              {lastSession ? lastSession.display_name : 'No previous session yet'}
+            </div>
           </div>
         </div>
 
@@ -655,7 +771,9 @@ export default function Lesson({ onQuiz }) {
         </div>
         {captionOn && (
           <div className="caption-box" style={{ marginBottom: 16 }}>
-            {bubbleEn || (bubbleText ? null : 'Select a topic or upload a PDF, then click the mic to begin.')}
+            {isThinking
+              ? '…'
+              : bubbleEn || (lessonActive ? null : 'Select a topic or upload a PDF, then click Start Lesson.')}
           </div>
         )}
 
@@ -685,7 +803,7 @@ export default function Lesson({ onQuiz }) {
               {chapterName ? ` — ${chapterName}` : ''}. Ready to test your knowledge?
             </div>
             <div className="popover-actions">
-              <button className="popover-btn-primary" onClick={() => onQuiz(pageTitle || topic || 'Quiz')}>Start Quiz →</button>
+              <button className="popover-btn-primary" onClick={() => onQuiz(pageTitle || topic || 'Quiz', chapterId, sessionIdRef.current)}>Start Quiz →</button>
               <button className="popover-btn-ghost" onClick={() => setShowPopover(false)}>Revisit lesson</button>
             </div>
           </div>

@@ -4,15 +4,23 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
+import time
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import interfaces
 from books.ingest import PdfIngestionError, ingest_book, list_chapters, process_chapter
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 from books.quiz import generate_quiz
 from memory.database import Database
 
@@ -26,6 +34,8 @@ app.add_middleware(
 )
 
 _db: Database | None = None
+# None = still generating, list = ready, missing key = not started
+_quiz_cache: dict[int, list[dict] | None] = {}
 
 
 def _get_db() -> Database:
@@ -106,14 +116,46 @@ def health() -> dict:
 # ---------------------------------------------------------------------------
 
 
+@app.get("/sessions")
+def list_sessions(limit: int = 5) -> list[dict]:
+    return _get_db().list_sessions(limit=limit)
+
+
+def _bg_generate_quiz(session_id: int, text: str, level: str) -> None:
+    """Background task: generate quiz, store in cache and persist to DB."""
+    logging.info("BG quiz generation started for session %s", session_id)
+    try:
+        questions = generate_quiz(text, n_questions=5, level=level)
+        result = questions if questions else _INTRO_QUIZ
+        _quiz_cache[session_id] = result
+        # Persist so it survives server restarts
+        ckpt = _get_db().load_checkpoint(session_id)
+        if ckpt:
+            _get_db().save_checkpoint(
+                session_id=session_id,
+                current_turn=ckpt.get("current_turn", 0),
+                plan_json=ckpt.get("plan_json", "{}"),
+                mode=ckpt.get("mode", "lesson"),
+                state_data=ckpt.get("state_data", ""),
+                quiz_json=json.dumps(result),
+            )
+        logging.info("BG quiz done for session %s — %d questions, persisted to DB", session_id, len(result))
+    except Exception as exc:
+        logging.warning("BG quiz failed for session %s: %s", session_id, exc)
+        _quiz_cache[session_id] = _INTRO_QUIZ
+
+
 @app.post("/sessions", response_model=SessionResponse)
-def create_session(body: SessionCreate) -> SessionResponse:
+def create_session(body: SessionCreate, background_tasks: BackgroundTasks) -> SessionResponse:
+    logging.info("POST /sessions — source_type=%s source_ref=%s level=%s chapter_id=%s",
+                 body.source_type, body.source_ref, body.level, body.chapter_id)
     db = _get_db()
     source_type = body.source_type
     source_ref = body.source_ref
 
     chapter_text = ""
     if body.chapter_id is not None:
+        logging.info("Processing chapter id=%s …", body.chapter_id)
         try:
             chapter = process_chapter(body.chapter_id, db)
         except (ValueError, Exception) as exc:
@@ -121,6 +163,7 @@ def create_session(body: SessionCreate) -> SessionResponse:
         chapter_text = chapter.get("cleaned_text") or ""
         source_type = "chapter"
         source_ref = str(body.chapter_id)
+        logging.info("Chapter processed — %d chars of text", len(chapter_text))
 
     try:
         sid = db.create_session(
@@ -131,7 +174,8 @@ def create_session(body: SessionCreate) -> SessionResponse:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    # store chapter_text in checkpoint so turns can reload it
+    logging.info("Session created — id=%s", sid)
+
     db.save_checkpoint(
         session_id=sid,
         current_turn=0,
@@ -144,7 +188,6 @@ def create_session(body: SessionCreate) -> SessionResponse:
         }),
     )
 
-    # pre-configure the conversation engine with chapter context
     interfaces.configure_conversation(
         mode=interfaces.get_audio_adapter_mode(),
         level=body.level,
@@ -152,6 +195,12 @@ def create_session(body: SessionCreate) -> SessionResponse:
         topic=source_ref,
         session_id=sid,
     )
+    logging.info("Conversation engine configured — mode=%s", interfaces.get_audio_adapter_mode())
+
+    # Kick off quiz generation in background so it's ready when the session ends
+    _quiz_cache[sid] = None  # mark as "generating"
+    quiz_text = chapter_text if chapter_text.strip() else f"Topic: {source_ref}\nLevel: {body.level}"
+    background_tasks.add_task(_bg_generate_quiz, sid, quiz_text, body.level)
 
     return SessionResponse(
         session_id=sid,
@@ -159,6 +208,61 @@ def create_session(body: SessionCreate) -> SessionResponse:
         source_ref=source_ref,
         level=body.level,
     )
+
+
+class OpenerResponse(BaseModel):
+    tutor_message: dict[str, Any]
+    audio_b64: str
+
+
+class OpenerRequest(BaseModel):
+    input: str = "start"  # "start" for new session, "resume" for returning
+
+
+@app.post("/sessions/{session_id}/opener", response_model=OpenerResponse)
+def session_opener(session_id: int, background_tasks: BackgroundTasks, body: OpenerRequest = OpenerRequest()) -> OpenerResponse:
+    """Generate Hernando's opening line for a session and return TTS audio."""
+    logging.info("POST /sessions/%s/opener — input=%s", session_id, body.input)
+    t0 = time.monotonic()
+
+    context = _session_context(session_id)
+    interfaces.configure_conversation(
+        mode=interfaces.get_audio_adapter_mode(),
+        level=context["level"],
+        chapter_text=context["chapter_text"],
+        topic=context["topic"],
+        session_id=session_id,
+    )
+
+    # On resume, only regenerate quiz if neither cache nor DB has it
+    if body.input == "resume" and session_id not in _quiz_cache:
+        ckpt = _get_db().load_checkpoint(session_id)
+        has_saved_quiz = bool(ckpt and ckpt.get("quiz_json"))
+        if not has_saved_quiz:
+            quiz_text = context["chapter_text"] if context["chapter_text"].strip() else f"Topic: {context['topic']}\nLevel: {context['level']}"
+            _quiz_cache[session_id] = None
+            background_tasks.add_task(_bg_generate_quiz, session_id, quiz_text, context["level"])
+            logging.info("Resume: kicked off BG quiz generation for session %s", session_id)
+        else:
+            logging.info("Resume: quiz already in DB for session %s — skipping regeneration", session_id)
+
+    try:
+        tutor_msg = interfaces.generate_tutor_response(body.input)
+    except Exception as exc:
+        logging.error("Opener LLM call failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Could not generate opener: {exc}") from exc
+
+    logging.info("Opener LLM done in %.1fs — es=%r", time.monotonic() - t0, tutor_msg.get("es", ""))
+
+    try:
+        wav = interfaces.speak(tutor_msg["es"], "ef_dora")
+        audio_b64 = base64.b64encode(wav).decode()
+        logging.info("Opener TTS done — %d bytes audio", len(wav))
+    except Exception as exc:
+        logging.warning("Opener TTS failed (%s) — returning silent response", exc)
+        audio_b64 = ""
+
+    return OpenerResponse(tutor_message=tutor_msg, audio_b64=audio_b64)
 
 
 @app.get("/sessions/{session_id}/checkpoint")
@@ -248,9 +352,13 @@ def text_turn(session_id: int, body: TextTurnRequest) -> TextTurnResponse:
 
 @app.post("/sessions/{session_id}/turns/voice", response_model=VoiceTurnResponse)
 async def voice_turn(session_id: int, audio: UploadFile = File(...), level: str = "A1") -> VoiceTurnResponse:
+    logging.info("POST /sessions/%s/turns/voice — level=%s", session_id, level)
+    t0 = time.monotonic()
+
     wav = await audio.read()
     if not wav:
         raise HTTPException(status_code=422, detail="audio file is empty")
+    logging.info("Audio received — %d bytes", len(wav))
 
     context = _session_context(session_id)
     interfaces.configure_conversation(
@@ -260,7 +368,11 @@ async def voice_turn(session_id: int, audio: UploadFile = File(...), level: str 
         topic=context["topic"],
         session_id=session_id,
     )
+
+    logging.info("Calling process_voice_answer …")
     result = interfaces.process_voice_answer(wav, level=level, voice="ef_dora")
+    logging.info("process_voice_answer done in %.1fs — learner=%r unclear=%s",
+                 time.monotonic() - t0, result.get("learner_text", ""), result.get("unclear"))
 
     stt_conf: float | None = None
     confs = result["transcript"].get("word_confidences", [])
@@ -398,6 +510,62 @@ def chapter_quiz(chapter_id: int, n_questions: int = 5, level: str = "B1") -> li
     if not text.strip():
         raise HTTPException(status_code=422, detail="Chapter has no processed text")
     return generate_quiz(text, n_questions=n_questions, level=level)
+
+
+_INTRO_QUIZ: list[dict] = [
+    {
+        "question": "How do you say 'My name is…' in Spanish?",
+        "options": ["Me llamo …", "Soy de …", "Tengo … años.", "Me gusta …"],
+        "answer": "Me llamo …",
+    },
+    {
+        "question": "How do you say 'I am from…' in Spanish?",
+        "options": ["Me llamo …", "Soy de …", "Tengo … años.", "Mucho gusto."],
+        "answer": "Soy de …",
+    },
+    {
+        "question": "How do you say 'Hello' in Spanish?",
+        "options": ["Adiós", "Gracias", "Hola", "Por favor"],
+        "answer": "Hola",
+    },
+    {
+        "question": "How do you say 'Nice to meet you' in Spanish?",
+        "options": ["Hasta luego", "Mucho gusto", "Lo siento", "De nada"],
+        "answer": "Mucho gusto",
+    },
+    {
+        "question": "What does '¿Cómo te llamas?' mean in English?",
+        "options": ["Where are you from?", "How old are you?", "What is your name?", "How are you?"],
+        "answer": "What is your name?",
+    },
+]
+
+
+@app.get("/sessions/{session_id}/quiz")
+def session_quiz(session_id: int) -> list[dict]:
+    """Return the pre-generated quiz for this session (ready instantly)."""
+    # 1. In-memory cache hit
+    cached = _quiz_cache.get(session_id)
+    if cached is None and session_id in _quiz_cache:
+        logging.info("GET /sessions/%s/quiz — still generating, returning fallback", session_id)
+        return _INTRO_QUIZ
+    if cached:
+        logging.info("GET /sessions/%s/quiz — serving %d cached questions", session_id, len(cached))
+        return cached
+    # 2. Cache cold (server restarted) — try DB
+    ckpt = _get_db().load_checkpoint(session_id)
+    if ckpt and ckpt.get("quiz_json"):
+        try:
+            questions = json.loads(ckpt["quiz_json"])
+            if questions:
+                _quiz_cache[session_id] = questions  # warm the cache
+                logging.info("GET /sessions/%s/quiz — loaded %d questions from DB", session_id, len(questions))
+                return questions
+        except (json.JSONDecodeError, TypeError):
+            pass
+    # 3. Nothing persisted — fallback
+    logging.info("GET /sessions/%s/quiz — no quiz found, returning fallback", session_id)
+    return _INTRO_QUIZ
 
 
 # ---------------------------------------------------------------------------

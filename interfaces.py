@@ -1,5 +1,13 @@
+import logging
 import os
+import time
+import warnings
 from typing import Any
+
+# Suppress HuggingFace Hub unauthenticated-request noise
+warnings.filterwarnings("ignore", message=".*unauthenticated.*", category=UserWarning)
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 _pronunciation_scorer: Any = None
 _whisper_transcriber: Any = None
@@ -46,7 +54,7 @@ def configure_conversation(
     if mode == "real":
         from tutor.conversation import ConversationEngine, OllamaLLM
 
-        llm = OllamaLLM()
+        llm = OllamaLLM(model="qwen2.5:7b")
     else:
         from tutor.conversation import ConversationEngine, MockLLM
 
@@ -67,7 +75,10 @@ def generate_tutor_response(learner_text: str) -> dict[str, Any]:
         raise ValueError("learner_text cannot be empty")
     if _conversation_engine is None:
         configure_conversation(mode="fake")
+    logging.info("LLM: generating tutor response for input=%r …", learner_text[:60])
+    t0 = time.monotonic()
     message = _conversation_engine.chat(learner_text)
+    logging.info("LLM done in %.1fs — es=%r", time.monotonic() - t0, message.es[:80])
     return message.model_dump()
 
 
@@ -77,7 +88,7 @@ def _get_whisper_transcriber() -> Any:
         from audio.pipeline import WhisperTranscriber
 
         _whisper_transcriber = WhisperTranscriber(
-            model_name="small",
+            model_name="medium",
             device="cpu",
             compute_type="int8",
         )
@@ -110,7 +121,11 @@ def transcribe(audio_bytes: bytes, initial_prompt: str = "") -> dict:
             "unclear": False,
         }
 
+    logging.info("STT: transcribing %d bytes …", len(audio_bytes))
+    t0 = time.monotonic()
     result = _get_whisper_transcriber().transcribe(audio_bytes)
+    logging.info("STT done in %.1fs — text=%r unclear=%s lang=%s",
+                 time.monotonic() - t0, result["text"], result.get("unclear"), result.get("language"))
     return {
         "text": result["text"],
         "word_confidences": [confidence for _, confidence in result["words"]],
@@ -126,8 +141,12 @@ def speak(text: str, voice: str) -> bytes:
     if get_audio_adapter_mode() == "fake":
         return b"fake_audio_data"
 
+    logging.info("TTS: synthesising %d chars …", len(text))
+    t0 = time.monotonic()
     kokoro_voice = "ef_dora" if voice in {"", "default"} else voice
-    return _get_kokoro_synthesizer().speak(text, kokoro_voice)
+    wav = _get_kokoro_synthesizer().speak(text, kokoro_voice)
+    logging.info("TTS done in %.1fs — %d bytes", time.monotonic() - t0, len(wav))
+    return wav
 
 
 def start_voice_answer(sample_rate: int = 16_000) -> None:
@@ -196,8 +215,8 @@ def process_voice_answer(
             "unclear": False,
         }
 
-    # STT gate — unclear audio triggers bilingual clarification, not LLM
-    if transcript.get("unclear"):
+    # STT gate — only skip LLM when there's no speech at all
+    if transcript.get("unclear") and not learner_text.strip():
         engine = _conversation_engine
         if engine is not None:
             tutor_msg, slow_word = engine.handle_unclear(learner_text)

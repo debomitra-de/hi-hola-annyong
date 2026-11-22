@@ -1,44 +1,4 @@
-import { useState } from 'react'
-
-const QUESTIONS = [
-  {
-    type: 'Vocabulary', typeIcon: '📚',
-    q: 'What does "la manzana" mean in English?',
-    hint: 'Think of a common fruit',
-    choices: ['The orange', 'The apple', 'The banana', 'The grape'],
-    answer: 1,
-  },
-  {
-    type: 'Comprehension', typeIcon: '💬',
-    q: '¿Qué quieres beber? She is asking you what?',
-    hint: 'Focus on "beber"',
-    choices: ['What you want to eat', 'What you want to drink', 'Where you want to go', 'How you are feeling'],
-    answer: 1,
-  },
-  {
-    type: 'Fill in the blank', typeIcon: '✏️',
-    q: 'Complete: "Quiero ___ café, por favor."',
-    hint: 'The word means "one" (masculine)',
-    isFill: true, answer: 'un',
-  },
-  {
-    type: 'Vocabulary', typeIcon: '📚',
-    q: 'How do you say "the restaurant" in Spanish?',
-    hint: 'It sounds very similar to the English word',
-    choices: ['La cocina', 'El restaurante', 'La tienda', 'El mercado'],
-    answer: 1,
-  },
-  {
-    type: 'Comprehension', typeIcon: '💬',
-    q: '"La cuenta, por favor" — what are you asking for?',
-    hint: 'Common phrase at the end of a meal',
-    choices: ['The menu', 'More water', 'The bill', 'A dessert'],
-    answer: 2,
-  },
-]
-
-const NEW_WORDS  = ['la manzana', 'beber', 'el restaurante', 'la cuenta', 'quiero']
-const REVIEW_ITEMS = ['Numbers 11–20', 'Ser vs. Estar']
+import { useState, useEffect } from 'react'
 
 function QuizSidebar({ topic, current, results, total, onHome }) {
   return (
@@ -68,39 +28,90 @@ function QuizSidebar({ topic, current, results, total, onHome }) {
   )
 }
 
-export default function Quiz({ onHome, topic }) {
-  const [current, setCurrent] = useState(0)
-  const [selected, setSelected] = useState(null)
-  const [fillVal, setFillVal] = useState('')
-  const [answered, setAnswered] = useState(false)
-  const [results, setResults] = useState([])
-  const [done, setDone] = useState(false)
+export default function Quiz({ onHome, topic, chapterId, sessionId }) {
+  const [questions, setQuestions] = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [loadErr, setLoadErr]     = useState(null)
+  const [current, setCurrent]     = useState(0)
+  const [selected, setSelected]   = useState(null)   // index into options[]
+  const [answered, setAnswered]   = useState(false)
+  const [isCorrect, setIsCorrect] = useState(false)
+  const [results, setResults]     = useState([])
+  const [done, setDone]           = useState(false)
 
-  const q = QUESTIONS[current]
-  const isCorrect = q.isFill
-    ? fillVal.trim().toLowerCase() === q.answer
-    : selected === q.answer
+  // Load questions from backend when chapter is available, else show placeholder
+  useEffect(() => {
+    if (!chapterId && !sessionId) {
+      setLoadErr('No session or chapter — go back and finish a lesson first.')
+      setLoading(false)
+      return
+    }
 
-  function handleChoice(i) {
-    if (answered) return
-    setSelected(i)
+    const url = chapterId
+      ? `/api/chapters/${chapterId}/quiz?n_questions=5&level=A1`
+      : `/api/sessions/${sessionId}/quiz`
+
+    fetch(url, { method: chapterId ? 'POST' : 'GET' })
+      .then(r => {
+        if (!r.ok) return r.text().then(t => { throw new Error(t) })
+        return r.json()
+      })
+      .then(qs => {
+        if (!qs.length) throw new Error('Backend returned no questions.')
+        setQuestions(qs)
+        setLoading(false)
+      })
+      .catch(err => {
+        setLoadErr(`Could not load quiz: ${err.message}`)
+        setLoading(false)
+      })
+  }, [chapterId, sessionId])
+
+  function handleCheck() {
+    if (answered || selected === null) return
+    const q = questions[current]
+    const correct = q.options[selected] === q.answer
+    setIsCorrect(correct)
     setAnswered(true)
   }
 
   function handleNext() {
     const next = [...results, isCorrect]
-    if (current + 1 >= QUESTIONS.length) {
+    if (current + 1 >= questions.length) {
       setResults(next); setDone(true)
     } else {
       setResults(next); setCurrent(c => c + 1)
-      setSelected(null); setFillVal(''); setAnswered(false)
+      setSelected(null); setAnswered(false); setIsCorrect(false)
     }
   }
 
   const score = results.filter(Boolean).length
 
+  if (loading) {
+    return (
+      <div className="quiz-screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center', color: '#6b7280' }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
+          <div>Generating your quiz…</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (loadErr) {
+    return (
+      <div className="quiz-screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center', maxWidth: 360 }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>⚠️</div>
+          <div style={{ color: '#dc2626', marginBottom: 16 }}>{loadErr}</div>
+          <button className="btn-ghost" onClick={onHome}>← Back</button>
+        </div>
+      </div>
+    )
+  }
+
   if (done) {
-    const pct = Math.round((score / QUESTIONS.length) * 100)
+    const pct = Math.round((score / questions.length) * 100)
     return (
       <div className="quiz-screen">
         <div className="quiz-sidebar">
@@ -121,23 +132,13 @@ export default function Quiz({ onHome, topic }) {
           <div className="results-top">
             <div className="results-emoji">{pct >= 80 ? '🏆' : pct >= 60 ? '👍' : '💪'}</div>
             <div className="results-title">{pct >= 80 ? 'Excellent!' : pct >= 60 ? 'Good job!' : 'Keep practicing!'}</div>
-            <div className="results-sub">{pct}% accuracy · {score}/{QUESTIONS.length} correct</div>
+            <div className="results-sub">{pct}% accuracy · {score}/{questions.length} correct</div>
           </div>
           <div className="score-tiles">
             <div className="score-tile"><div className="val">{score}</div><div className="lbl">Correct</div></div>
-            <div className="score-tile"><div className="val">{QUESTIONS.length - score}</div><div className="lbl">Missed</div></div>
+            <div className="score-tile"><div className="val">{questions.length - score}</div><div className="lbl">Missed</div></div>
             <div className="score-tile"><div className="val">{pct}%</div><div className="lbl">Score</div></div>
           </div>
-          <div className="words-section">
-            <div className="words-label">New words learned</div>
-            <div className="word-chips">{NEW_WORDS.map(w => <span key={w} className="chip">{w}</span>)}</div>
-          </div>
-          {REVIEW_ITEMS.length > 0 && (
-            <div className="words-section">
-              <div className="words-label">Needs more practice</div>
-              <div className="word-chips">{REVIEW_ITEMS.map(w => <span key={w} className="chip review">{w}</span>)}</div>
-            </div>
-          )}
           <div className="results-actions">
             <button className="btn-primary" onClick={onHome}>Next chapter →</button>
             <button className="btn-ghost" onClick={onHome}>Back to home</button>
@@ -147,62 +148,60 @@ export default function Quiz({ onHome, topic }) {
     )
   }
 
+  const q = questions[current]
+
   return (
     <div className="quiz-screen">
       <QuizSidebar
         topic={topic}
         current={current}
         results={results}
-        total={QUESTIONS.length}
+        total={questions.length}
         onHome={onHome}
       />
 
       <div className="quiz-content">
         <div className="question-card">
-          <div className="q-type-badge"><span>{q.typeIcon}</span><span>{q.type}</span></div>
-          <div className="q-text">{q.q}</div>
-          {q.hint && <div className="q-hint">Hint: {q.hint}</div>}
+          <div className="q-type-badge"><span>🔤</span><span>Multiple choice</span></div>
+          <div className="q-text">{q.question}</div>
 
-          {q.isFill ? (
-            <>
-              <input
-                className="fill-input"
-                placeholder="Type your answer…"
-                value={fillVal}
-                onChange={e => setFillVal(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && !answered && setAnswered(true)}
-                disabled={answered}
-              />
-              {!answered && (
-                <button className="btn-primary" style={{ maxWidth: 200, marginBottom: 12 }} onClick={() => setAnswered(true)}>
-                  Check answer
+          <div className="mcq-options">
+            {(q.options || []).map((opt, i) => {
+              let cls = 'mcq-option'
+              if (answered) {
+                if (opt === q.answer) cls += ' correct'
+                else if (i === selected) cls += ' wrong'
+              } else if (i === selected) {
+                cls += ' selected'
+              }
+              return (
+                <button
+                  key={i}
+                  className={cls}
+                  onClick={() => !answered && setSelected(i)}
+                  disabled={answered}
+                >
+                  <span className="mcq-letter">{String.fromCharCode(65 + i)}</span>
+                  {opt}
                 </button>
-              )}
-            </>
-          ) : (
-            <div className="choice-list">
-              {q.choices.map((c, i) => {
-                let cls = ''
-                if (answered) {
-                  if (i === q.answer)              cls = 'correct'
-                  else if (i === selected)         cls = 'wrong'
-                }
-                return (
-                  <button key={i} className={`choice ${cls}`} onClick={() => handleChoice(i)} disabled={answered}>
-                    <span>{c}</span>
-                    {answered && i === q.answer               && <span className="choice-check">✓</span>}
-                    {answered && i === selected && i !== q.answer && <span className="choice-check">✗</span>}
-                  </button>
-                )
-              })}
-            </div>
+              )
+            })}
+          </div>
+
+          {!answered && (
+            <button
+              className="btn-primary"
+              style={{ maxWidth: 200, marginBottom: 12 }}
+              onClick={handleCheck}
+              disabled={selected === null}
+            >
+              Check answer
+            </button>
           )}
 
           {answered && (
             <div className={`answer-feedback ${isCorrect ? 'correct' : 'wrong'}`}>
-              {isCorrect
-                ? '✅ Correct! Well done.'
-                : `❌ The correct answer is: "${q.isFill ? q.answer : q.choices[q.answer]}"`}
+              {isCorrect ? '✅ Correct! Well done.' : `❌ The correct answer is: "${q.answer}"`}
             </div>
           )}
         </div>
@@ -210,7 +209,7 @@ export default function Quiz({ onHome, topic }) {
         {answered && (
           <div className="quiz-footer-row">
             <button className="btn-primary" onClick={handleNext}>
-              {current + 1 < QUESTIONS.length ? 'Next question →' : 'See results →'}
+              {current + 1 < questions.length ? 'Next question →' : 'See results →'}
             </button>
           </div>
         )}

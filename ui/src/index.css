@@ -736,14 +736,31 @@ input, select { font-family: inherit; }
 .choice.wrong   { border-color: #f87171; color: #dc2626; background: #fef2f2; }
 .choice-check   { font-size: 16px; }
 
-.fill-input {
-  width: 100%; background: var(--grey-bg);
-  border: 1.5px solid var(--grey-border); border-radius: var(--r-sm);
-  padding: 15px 18px; font-size: 16px; color: var(--text); outline: none;
-  transition: border-color .12s; margin-bottom: 12px;
+.mcq-options {
+  display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;
 }
-.fill-input:focus { border-color: var(--pink); background: var(--bg); }
-.fill-input::placeholder { color: var(--text-3); }
+.mcq-option {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; text-align: left; padding: 14px 18px;
+  border: 1.5px solid var(--grey-border); border-radius: var(--r-sm);
+  background: var(--grey-bg); color: var(--text); font-size: 15px;
+  cursor: pointer; transition: border-color .12s, background .12s;
+}
+.mcq-option:hover:not(:disabled) { border-color: var(--pink); background: var(--bg); }
+.mcq-option.selected { border-color: var(--pink); background: var(--bg); }
+.mcq-option.correct  { border-color: #22c55e; background: #f0fdf4; color: #15803d; }
+.mcq-option.wrong    { border-color: #f87171; background: #fef2f2; color: #dc2626; }
+.mcq-option:disabled { cursor: default; }
+.mcq-letter {
+  font-weight: 700; font-size: 13px; min-width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--grey-border); color: var(--text-2);
+}
+.mcq-option.selected .mcq-letter { background: var(--pink); color: #fff; }
+.mcq-option.correct .mcq-letter  { background: #22c55e; color: #fff; }
+.mcq-option.wrong .mcq-letter    { background: #f87171; color: #fff; }
+
+
 
 .answer-feedback {
   border-radius: var(--r-sm); padding: 14px 16px;

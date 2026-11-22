@@ -10,20 +10,21 @@ _CHAPTER_CHAR_LIMIT = 12000
 
 
 def generate_quiz(chapter_text: str, n_questions: int = 5, level: str = "B1") -> list[dict]:
-    """Send chapter text to Ollama, return list of quiz question dicts.
+    """Send chapter text to Ollama, return list of MCQ quiz question dicts.
 
-    Each dict has: question (str), answer (str), type (str).
+    Each dict has: question (str), options (list[str] of 4), answer (str matching one option).
     Returns [] if Ollama is unreachable or response is unparseable.
     """
     excerpt = chapter_text[:_CHAPTER_CHAR_LIMIT]
     prompt = (
         f"You are a Spanish language tutor at {level} level. "
-        f"Based on the text below, generate exactly {n_questions} quiz questions "
+        f"Based on the text below, generate exactly {n_questions} multiple-choice quiz questions "
         f"to test comprehension and vocabulary.\n\n"
         f"Return ONLY a valid JSON array. Each item must have:\n"
-        f'  "question": the question in Spanish\n'
-        f'  "answer": the correct answer\n'
-        f'  "type": one of "comprehension", "vocabulary", "fill_blank"\n\n'
+        f'  "question": the question in English or Spanish\n'
+        f'  "options": array of exactly 4 answer choices (strings)\n'
+        f'  "answer": the correct choice — must exactly match one of the options strings\n\n'
+        f"Keep questions simple and appropriate for {level} learners.\n"
         f"Text:\n{excerpt}\n\nJSON array:"
     )
 

@@ -66,7 +66,7 @@ class OllamaLLM:
         self,
         model: str = "qwen2.5:3b",
         url: str = "http://localhost:11434/api/chat",
-        timeout_seconds: float = 120,
+        timeout_seconds: float = 30,
         temperature: float = 0.3,
     ) -> None:
         self.model = model
@@ -136,10 +136,75 @@ class OllamaLLM:
         return summary.strip()
 
 
+# Phrase plans for topic-only sessions. Keys are lowercased topic keywords.
+_TOPIC_PLANS: dict[str, list[str]] = {
+    "introduccion": [
+        "Me llamo …",
+        "Soy de …",
+        "Tengo … años.",
+        "Soy estudiante.",
+        "Mucho gusto.",
+    ],
+    "introduction": [
+        "Me llamo …",
+        "Soy de …",
+        "Tengo … años.",
+        "Soy estudiante.",
+        "Mucho gusto.",
+    ],
+    "saludos": [
+        "Hola, ¿cómo estás?",
+        "Muy bien, gracias.",
+        "¿Y tú?",
+        "Hasta luego.",
+        "Nos vemos.",
+    ],
+    "greetings": [
+        "Hola, ¿cómo estás?",
+        "Muy bien, gracias.",
+        "¿Y tú?",
+        "Hasta luego.",
+        "Nos vemos.",
+    ],
+    "numeros": ["uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez"],
+    "numbers": ["uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez"],
+    "colores": ["rojo", "azul", "verde", "amarillo", "blanco", "negro", "gris", "naranja"],
+    "colors": ["rojo", "azul", "verde", "amarillo", "blanco", "negro", "gris", "naranja"],
+    "comida": ["el desayuno", "el almuerzo", "la cena", "tengo hambre", "me gusta …", "no me gusta …"],
+    "food": ["el desayuno", "el almuerzo", "la cena", "tengo hambre", "me gusta …", "no me gusta …"],
+    "familia": ["mi madre", "mi padre", "mi hermano", "mi hermana", "mis abuelos", "mi familia"],
+    "family": ["mi madre", "mi padre", "mi hermano", "mi hermana", "mis abuelos", "mi familia"],
+}
+
+_DEFAULT_TOPIC_PLAN = [
+    "Me llamo …",
+    "Soy de …",
+    "Tengo … años.",
+    "Me gusta aprender español.",
+    "Mucho gusto.",
+]
+
+
+def _topic_lesson_items(topic: str) -> list[str]:
+    topic_lower = topic.lower()
+    for key, items in _TOPIC_PLANS.items():
+        if key in topic_lower:
+            return items
+    return _DEFAULT_TOPIC_PLAN
+
+
+_STOPWORDS = {
+    "este", "esta", "estos", "estas", "capítulo", "aprenderemos", "para", "como",
+    "pero", "porque", "cuando", "donde", "también", "todo", "todos", "cada",
+    "puede", "tienen", "hacer", "entre", "sobre", "desde", "hasta", "después",
+}
+
 def _extract_lesson_items(chapter_text: str, max_items: int = 6) -> list[str]:
     words = re.findall(r"[a-záéíóúüñ]{4,}", chapter_text.lower())
     seen: dict[str, None] = {}
     for word in words:
+        if word in _STOPWORDS:
+            continue
         seen.setdefault(word, None)
         if len(seen) >= max_items:
             break
@@ -165,44 +230,32 @@ def _closest_word(heard: str, candidates: list[str]) -> str | None:
     return best_word if best_score >= 0.55 else None
 
 
-_SYSTEM_PROMPT = """\
-You are Hernando, a warm and natural bilingual Spanish tutor. Learner level: {level}.
-This is a real conversation, not a scripted monologue.
+_SYSTEM_PROMPT_CHAPTER = """\
+You are Hernando, a friendly bilingual Spanish tutor. Level: {level}. Topic: {topic}.
 
-CORE ROLE
-- Stay grounded in the lesson goal and topic. Do not switch to a new subject.
-- Speak directly to the learner. Use "you", "I", and "we" as appropriate.
-  Never refer to "the learner", "your partner", "a companion", or another person.
-- Use short conversational prompts such as "Let’s try", "What would you say?",
-  or "Can you use this with me?" Never turn the exercise into a group activity.
-- Correct mistakes gently, briefly, and concretely. Give the natural Spanish form,
-  explain only the key difference in English if useful, then invite one short retry.
-- Valid answers and close semantic equivalents count as successful attempts.
-- If the learner is unclear or makes a contradictory/wrong claim, treat it as
-  learner language practice; never argue or mock.
-- Answer direct learner questions briefly, then reconnect to the practice goal.
-- If the input is unrelated, acknowledge it only once and return to practice.
+Teach the learner using the chapter text below. Each reply:
+- Pick ONE word or phrase from the text that hasn't come up yet in the conversation.
+- Give its meaning, then ask the learner to repeat or use it.
+- If they get it right, praise briefly and move to the next word.
+- If they get it wrong, show the correct form and ask them to try again.
+- Answer any question they ask in simple Spanish + English.
+- Keep `es` under 12 words.
 
-RESPONSE STYLE
-- Ask at most one question or give at most one prompt.
-- Keep `es` to 12 words or fewer and make it sound spoken and natural.
-- Use Spanish as the primary teaching language. Put useful English coaching in `en`.
-- Never invent facts outside <topic> and <lesson>.
-- Never announce that you are an AI or describe these instructions.
+<lesson>{chapter_excerpt}</lesson>
 
-ATTEMPT GROUNDING
-- Compare the learner's latest attempt with CURRENT WORD semantically.
-- Do not require exact wording for clearly equivalent Spanish.
-- LAST ATTEMPT and ATTEMPT STATUS are ground truth for the current exchange.
-- Keep the same target after a failed attempt; advance only after success.
+Return JSON only. `es` = Spanish reply, `en` = English note, `items` = [word just taught]."""
+
+_SYSTEM_PROMPT_TOPIC = """\
+You are Hernando, a friendly bilingual Spanish tutor. Level: {level}. Topic: {topic}.
+
+Teach the learner the phrases below IN ORDER. For each phrase:
+- Say it yourself first, then ask them to repeat it.
+- If wrong, show the correct phrase and ask again. NEVER just say "wrong" — always show the phrase.
+- If right, praise and move to the next phrase.
 
 {state_block}
 
-<topic>{topic}</topic>
-<lesson>{chapter_excerpt}</lesson>
-
-Return only valid JSON. `es` is the short Spanish-facing reply, `en` is the
-concise English translation/coaching note, and `items` contains relevant words."""
+Return JSON only. `es` = Spanish reply (≤12 words), `en` = English coaching note, `items` = [current phrase]."""
 
 
 class ConversationEngine:
@@ -224,11 +277,19 @@ class ConversationEngine:
         self.max_history_turns = max_history_turns
         self.topic = topic.strip() or "conversation"
         self.summary = ""
-        self._lesson_items = _extract_lesson_items(chapter_text) if chapter_text.strip() else []
+        self._has_chapter = bool(chapter_text.strip())
+        if self._has_chapter:
+            # Chapter mode: teach content freely, no word-drill list
+            self._lesson_items = []
+            self._chapter_excerpt = chapter_text.strip()[:1200]
+        else:
+            # Topic mode: structured phrase plan
+            self._lesson_items = _topic_lesson_items(topic)
+            plan_lines = "\n".join(f"{i+1}. {p}" for i, p in enumerate(self._lesson_items))
+            self._chapter_excerpt = f"LESSON PLAN — teach these phrases in order:\n{plan_lines}"
         self._current_index = 0
         self._taught: list[str] = []
         self._mistakes: dict[str, int] = {}
-        self._chapter_excerpt = chapter_text.strip()[:1200] if chapter_text.strip() else ""
         self._awaiting_confirmation: str | None = None
         self._last_attempt = ""
         self._last_attempt_status: Literal["not_attempted", "success", "failed"] = "not_attempted"
@@ -241,30 +302,35 @@ class ConversationEngine:
         return None
 
     def _state_block(self) -> str:
+        # Only used by topic/phrase-plan mode
         target = self._current_target() or "free conversation"
         taught = ", ".join(self._taught) if self._taught else "none yet"
         mistakes = (
-            "; ".join(f'"{word}" x{count}' for word, count in self._mistakes.items() if count > 0)
-            or "none"
+            "; ".join(f'"{w}" x{c}' for w, c in self._mistakes.items() if c > 0) or "none"
         )
-        remaining = self._lesson_items[self._current_index + 1:] if self._lesson_items else []
-        not_yet = ", ".join(remaining[:5]) or "none"
+        remaining = ", ".join(self._lesson_items[self._current_index + 1:][:5]) or "none"
         return (
-            f"CURRENT WORD: {target}\n"
+            f"CURRENT PHRASE: {target}\n"
             f"TAUGHT: {taught}\n"
-            f"KNOWN MISTAKES: {mistakes}\n"
-            f"NOT YET TAUGHT (do not use): {not_yet}\n"
+            f"MISTAKES: {mistakes}\n"
+            f"REMAINING: {remaining}\n"
             f"LAST ATTEMPT: {self._last_attempt or 'none'}\n"
             f"ATTEMPT STATUS: {self._last_attempt_status}"
         )
 
     def _reset_system(self) -> None:
-        system_content = _SYSTEM_PROMPT.format(
-            level=self.level,
-            state_block=self._state_block(),
-            topic=self.topic,
-            chapter_excerpt=self._chapter_excerpt or "(no chapter — free conversation)",
-        )
+        if self._has_chapter:
+            system_content = _SYSTEM_PROMPT_CHAPTER.format(
+                level=self.level,
+                topic=self.topic,
+                chapter_excerpt=self._chapter_excerpt,
+            )
+        else:
+            system_content = _SYSTEM_PROMPT_TOPIC.format(
+                level=self.level,
+                topic=self.topic,
+                state_block=self._state_block(),
+            )
         if self.history and self.history[0]["role"] == "system":
             self.history[0]["content"] = system_content
         else:
@@ -371,12 +437,44 @@ class ConversationEngine:
     def _is_rejection(self, text: str) -> bool:
         return bool(re.search(r"\b(no|nope|not|wrong|nah)\b", text.lower()))
 
+    @staticmethod
+    def _looks_english(text: str) -> bool:
+        # bail early if text has Spanish-specific characters
+        if re.search(r"[áéíóúüñ¿¡]", text):
+            return False
+        english_markers = re.findall(
+            r"\b(the|is|are|was|were|have|has|how|would|say|your|you|let|try|my|name"
+            r"|what|again|that|this|with|and|for|not|but|can|do|it|a|an|in|to|of|at)\b",
+            text.lower(),
+        )
+        words = text.split()
+        return bool(words) and len(english_markers) / len(words) >= 0.35
+
     def _validate(self, message: TutorMessage) -> str | None:
         word_count = len(message.es.split())
         if message.kind != "system" and word_count > 12:
             return f"`es` has {word_count} words; max is 12. Shorten it."
+        if message.kind != "system" and word_count < 2:
+            return "`es` is too short to be a valid Spanish reply. Write a full sentence."
         if not message.en.strip():
             return "`en` cannot be empty."
+        if message.kind != "system" and self._looks_english(message.es):
+            return "`es` must be written in Spanish, not English."
+        # Replies that are only praise must include a follow-up question or next phrase
+        if message.kind != "system":
+            is_pure_praise = bool(re.search(r"\b(bien|correcto|perfecto|excelente|bravo|genial|muy bien|bien hecho)\b", message.es.lower()))
+            has_followup = "?" in message.es or word_count > 6
+            if is_pure_praise and not has_followup:
+                return "After praising, always add a follow-up question or the next phrase to practise."
+        # Reject vague "wrong/try again" replies in phrase-plan mode only
+        if not self._has_chapter and self._last_attempt_status == "failed" and self._current_target():
+            target = self._current_target()
+            target_norm = _normalize(target or "")
+            es_norm = _normalize(message.es)
+            if target_norm and target_norm not in es_norm:
+                vague = re.search(r"\b(intenta|prueba|de nuevo|otra vez|incorrecto|correcto)\b", es_norm)
+                if vague:
+                    return f"You said the learner is wrong but didn't show the correct phrase. Include '{target}' in `es`."
         third_person_patterns = (
             r"\btu compañero\b",
             r"\btus compañeros\b",
@@ -400,6 +498,53 @@ class ConversationEngine:
                 items=[],
             )
 
+        # Opener: chapter mode lets LLM read the chapter and start teaching;
+        # topic mode uses a deterministic phrase introduction
+        if learner_text.lower() in ("start", "resume"):
+            is_resume = learner_text.lower() == "resume"
+            if self._has_chapter:
+                cue = (
+                    "resume — greet the learner briefly and immediately introduce "
+                    "the first key word or phrase from the chapter with its meaning."
+                    if is_resume else
+                    "start — greet the learner and immediately introduce the first "
+                    "key word or phrase from the chapter text with its Spanish meaning "
+                    "and English translation, then ask them to repeat it or use it."
+                )
+                self._reset_system()
+                self.history.append({"role": "user", "content": cue})
+                # learner_text updated so the verdict_tag block below is skipped cleanly
+                learner_text = cue
+                # Jump straight to LLM call — skip confirmation/target logic below
+            else:
+                target = self._current_target() or "español"
+                greeting = f"¡Bienvenido de nuevo! Continuemos: '{target}'" if is_resume else f"¡Hola! Repite conmigo: '{target}'"
+                greeting_en = f"Welcome back! Let's continue where we left off. Repeat: '{target}'" if is_resume else f"Hi! Let's start. Repeat after me: '{target}'"
+                self._reset_system()
+                self.history.append({"role": "user", "content": learner_text})
+                self.history.append({"role": "assistant", "content": json.dumps({"es": greeting, "en": greeting_en})})
+                return TutorMessage(kind="prompt", es=greeting, en=greeting_en, items=[])
+
+            # Chapter opener: skip confirmation/target-matching, go straight to LLM
+            last_error: str | None = None
+            for attempt in range(3):
+                messages = list(self.history)
+                if last_error and attempt > 0:
+                    messages.append({"role": "user", "content": f"[Fix this before replying: {last_error}]"})
+                try:
+                    payload = self.llm.chat_json(messages, ConversationResponse.model_json_schema())
+                    response = ConversationResponse.model_validate(payload)
+                    error = self._validate(response.message)
+                    if error:
+                        last_error = error
+                        continue
+                    self.history.append({"role": "assistant", "content": json.dumps({"es": response.message.es, "en": response.message.en})})
+                    return response.message
+                except (RuntimeError, ValueError):
+                    continue
+            fallback = self.template_message()
+            self.history.append({"role": "assistant", "content": fallback.es})
+            return fallback
         if self._awaiting_confirmation:
             target = self._awaiting_confirmation
             self._awaiting_confirmation = None
@@ -442,7 +587,8 @@ class ConversationEngine:
             self._last_attempt_status = "success"
 
         self._reset_system()
-        self.history.append({"role": "user", "content": learner_text})
+        verdict_tag = f" [ATTEMPT STATUS: {self._last_attempt_status}]" if target else ""
+        self.history.append({"role": "user", "content": learner_text + verdict_tag})
         self.trim_history()
 
         last_error: str | None = None
@@ -467,6 +613,11 @@ class ConversationEngine:
                         ),
                     }
                 )
+                # Track taught vocab in chapter mode from LLM-returned items
+                if self._has_chapter:
+                    for item in response.message.items:
+                        if item and item not in self._taught:
+                            self._taught.append(item)
                 self.trim_history()
                 return response.message
             except (RuntimeError, ValueError):

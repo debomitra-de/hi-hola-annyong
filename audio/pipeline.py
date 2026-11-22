@@ -1,9 +1,14 @@
+import warnings
 from io import BytesIO
 from typing import Any
 
 import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
+
+# Suppress noisy third-party warnings that aren't actionable
+warnings.filterwarnings("ignore", category=FutureWarning, module="torch")
+warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 
 
 def convert_wav(
@@ -184,21 +189,20 @@ class WhisperTranscriber:
             )
         return self._model
 
-    def transcribe(self, wav_bytes: bytes) -> dict:
+    def transcribe(self, wav_bytes: bytes, initial_prompt: str | None = None) -> dict:
         converted = convert_wav(wav_bytes, 16_000, 1)
         audio, _sample_rate = sf.read(BytesIO(converted), dtype="float32")
-        segments, info = self._get_model().transcribe(
+        segs, info = self._get_model().transcribe(
             audio,
-            language=None,
+            language="es",
             beam_size=5,
             word_timestamps=True,
             vad_filter=True,
             condition_on_previous_text=False,
             temperature=0.0,
-            initial_prompt=None,
+            initial_prompt=initial_prompt,
         )
-
-        segment_list = list(segments)
+        segment_list = list(segs)
         text = " ".join(segment.text.strip() for segment in segment_list).strip()
         words: list[tuple[str, float]] = []
         for segment in segment_list:
@@ -247,8 +251,8 @@ class KokoroSynthesizer:
     def _get_pipeline(self) -> Any:
         if self._pipeline is None:
             from kokoro import KPipeline
-
-            self._pipeline = KPipeline(lang_code=self.lang_code)
+            # repo_id suppresses the "Defaulting repo_id" warning
+            self._pipeline = KPipeline(lang_code=self.lang_code, repo_id="hexgrad/Kokoro-82M")
         return self._pipeline
 
     def speak(self, text: str, voice: str | None = None, speed: float = 0.85) -> bytes:
