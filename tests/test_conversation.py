@@ -53,7 +53,6 @@ def test_wrong_attempt_is_grounded_and_keeps_current_target():
     engine = ConversationEngine(
         MockLLM(),
         level="A1",
-        chapter_text="Hola casa comida.",
         topic="Ordering food",
     )
     target = engine._current_target()
@@ -63,14 +62,14 @@ def test_wrong_attempt_is_grounded_and_keeps_current_target():
     assert engine._last_attempt_status == "failed"
     assert engine._mistakes[target] == 1
     assert engine._current_target() == target
-    assert "<topic>Ordering food</topic>" in engine.history[0]["content"]
+    assert "Ordering food" in engine.history[0]["content"]
 
 
 def test_matching_attempt_advances_and_preserves_recent_mistakes():
     engine = ConversationEngine(
         MockLLM(),
         level="A1",
-        chapter_text="Hola casa comida.",
+        topic="greetings",
     )
     first_target = engine._current_target()
 

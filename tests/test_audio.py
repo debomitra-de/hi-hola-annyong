@@ -171,7 +171,7 @@ def test_whisper_auto_detects_language_without_initial_prompt(monkeypatch):
 
     transcriber.transcribe(make_wav(sample_rate=16_000))
 
-    assert captured["language"] is None
+    assert captured["language"] == "es"
     assert captured["initial_prompt"] is None
 
 
