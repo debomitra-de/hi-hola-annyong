@@ -1,5 +1,8 @@
 # Development Setup and Spikes
 
+This file collects development setup, testing, CI, and database notes, along
+with experiment results for Ollama, Faster-Whisper, and the CNAM phonemizer.
+
 ## Python environment
 
 Use the project virtual environment so packages are installed for the intended
@@ -87,22 +90,22 @@ ollama serve
 Download and run the model used by this spike:
 
 ```bash
-ollama pull qwen2.5:3b
-ollama run qwen2.5:3b
+ollama pull qwen2.5:7b
+ollama run qwen2.5:7b
 ```
 
 The local API is available at `http://localhost:11434`. Test it with:
 
 ```bash
 curl http://localhost:11434/api/generate \
-  -d '{"model":"qwen2.5:3b","prompt":"Describe your day in Spanish.","stream":false}'
+  -d '{"model":"qwen2.5:7b","prompt":"Describe your day in Spanish.","stream":false}'
 ```
 
 ## Spike results
 
 ### Ollama
 
-Model: `qwen2.5:3b`  
+Model: `qwen2.5:7b`
 Result: PASS  
 Observed response time: 1.17 seconds
 

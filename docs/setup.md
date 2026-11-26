@@ -66,7 +66,7 @@ irm https://ollama.com/install.ps1 | iex
 Pull the default model and start the server:
 
 ```bash
-ollama pull qwen2.5:3b
+ollama pull qwen2.5:7b
 ollama serve
 ```
 
@@ -88,9 +88,11 @@ Models are downloaded by their libraries on first real use:
 
 - Kokoro: the `hexgrad/Kokoro-82M` assets are resolved by Kokoro during the first
   `KokoroSynthesizer.speak()` call.
+- Faster-Whisper: the `medium` model is downloaded on first transcription in the
+  app; diagnostics may use the `small` model.
 - CNAM: `Cnam-LMSSC/wav2vec2-spanish-phonemizer` is downloaded by Transformers
   during the first `SpanishPhonemizer()` construction.
-- Qwen: `qwen2.5:3b` is downloaded by `ollama pull`.
+- Qwen: `qwen2.5:7b` is downloaded by `ollama pull`.
 
 All models are cached locally after the first successful download. Internet
 access is only needed for initial model installation; a session can run offline
