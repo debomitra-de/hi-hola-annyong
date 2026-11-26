@@ -6,7 +6,9 @@ import base64
 import json
 import logging
 import os
+import tempfile
 import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
@@ -468,19 +470,28 @@ async def upload_book(file: UploadFile = File(...)) -> dict:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=422, detail="Only PDF files are supported")
 
-    import tempfile
-
     contents = await file.read()
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+    db = _get_db()
+    upload_dir = Path(db.db_path).resolve().parent / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        suffix=".pdf", dir=upload_dir, delete=False
+    ) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
 
+    keep_upload = False
     try:
-        book_id = ingest_book(tmp_path, _get_db())
+        book_id = ingest_book(tmp_path, db)
+        keep_upload = True
+        book = db.get_book(book_id)
+        if book and Path(book["stored_path"]).resolve() != Path(tmp_path).resolve():
+            keep_upload = False
     except PdfIngestionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
-        os.unlink(tmp_path)
+        if not keep_upload:
+            Path(tmp_path).unlink(missing_ok=True)
 
     return {"book_id": book_id}
 
@@ -514,27 +525,27 @@ def chapter_quiz(chapter_id: int, n_questions: int = 5, level: str = "B1") -> li
 
 _INTRO_QUIZ: list[dict] = [
     {
-        "question": "How do you say 'My name is…' in Spanish?",
+        "question": "¿Cómo se dice «Me llamo…» en español?",
         "options": ["Me llamo …", "Soy de …", "Tengo … años.", "Me gusta …"],
         "answer": "Me llamo …",
     },
     {
-        "question": "How do you say 'I am from…' in Spanish?",
+        "question": "¿Cómo se dice «Soy de…» en español?",
         "options": ["Me llamo …", "Soy de …", "Tengo … años.", "Mucho gusto."],
         "answer": "Soy de …",
     },
     {
-        "question": "How do you say 'Hello' in Spanish?",
+        "question": "¿Cómo se dice «Hola» en español?",
         "options": ["Adiós", "Gracias", "Hola", "Por favor"],
         "answer": "Hola",
     },
     {
-        "question": "How do you say 'Nice to meet you' in Spanish?",
+        "question": "¿Cómo se dice «Nice to meet you» en español?",
         "options": ["Hasta luego", "Mucho gusto", "Lo siento", "De nada"],
         "answer": "Mucho gusto",
     },
     {
-        "question": "What does '¿Cómo te llamas?' mean in English?",
+        "question": "¿Qué significa «¿Cómo te llamas?» en inglés?",
         "options": ["Where are you from?", "How old are you?", "What is your name?", "How are you?"],
         "answer": "What is your name?",
     },

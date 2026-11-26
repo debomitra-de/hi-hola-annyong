@@ -65,6 +65,24 @@ def test_process_chapter_is_cached(tmp_path, db):
     assert hashlib.sha256(pdf_path.read_bytes()).hexdigest()
 
 
+def test_reingesting_missing_pdf_repairs_stored_path(tmp_path, db):
+    original_path = tmp_path / "original.pdf"
+    replacement_path = tmp_path / "replacement.pdf"
+    _create_text_pdf(original_path, toc=True)
+    original_path.replace(replacement_path)
+
+    book_id = ingest_book(str(replacement_path), db)
+    replacement_bytes = replacement_path.read_bytes()
+    replacement_path.unlink()
+    reuploaded_path = tmp_path / "reuploaded.pdf"
+    reuploaded_path.write_bytes(replacement_bytes)
+
+    assert ingest_book(str(reuploaded_path), db) == book_id
+    assert db.get_book(book_id)["stored_path"] == str(reuploaded_path.resolve())
+    chapter = list_chapters(book_id, db)[0]
+    assert "Hola" in process_chapter(chapter["id"], db)["cleaned_text"]
+
+
 def test_image_only_pdf_is_rejected(tmp_path, db):
     pdf_path = tmp_path / "scanned.pdf"
     doc = pymupdf.open()

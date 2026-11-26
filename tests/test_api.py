@@ -1,7 +1,8 @@
 """Tests for api.py FastAPI endpoints."""
 
-import json
 import io
+import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -171,7 +172,7 @@ def test_upload_non_pdf(client):
     assert resp.status_code == 422
 
 
-def test_upload_and_list_chapters(client, tmp_path):
+def test_upload_and_list_chapters(client, tmp_path, fresh_db):
     import pymupdf
 
     pdf_path = tmp_path / "spanish.pdf"
@@ -183,19 +184,46 @@ def test_upload_and_list_chapters(client, tmp_path):
     doc.save(str(pdf_path))
     doc.close()
 
-    with open(pdf_path, "rb") as f:
-        resp = client.post("/books", files={"file": ("spanish.pdf", f, "application/pdf")})
+    pdf_bytes = pdf_path.read_bytes()
+    resp = client.post(
+        "/books",
+        files={"file": ("spanish.pdf", pdf_bytes, "application/pdf")},
+    )
     assert resp.status_code == 200
     book_id = resp.json()["book_id"]
+
+    Path(fresh_db.get_book(book_id)["stored_path"]).unlink()
+    reupload = client.post(
+        "/books",
+        files={"file": ("spanish.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert reupload.status_code == 200
+    assert reupload.json()["book_id"] == book_id
 
     chapters = client.get(f"/books/{book_id}/chapters").json()
     assert isinstance(chapters, list)
     assert len(chapters) >= 1
+    processed = client.post(f"/chapters/{chapters[0]['id']}/process")
+    assert processed.status_code == 200
+    assert "Hola amigo" in processed.json()["cleaned_text"]
 
 
 def test_get_chapters_404_unknown_book(client):
     resp = client.get("/books/9999/chapters")
     assert resp.status_code == 404
+
+
+def test_generating_session_quiz_fallback_is_spanish(client, fresh_db, monkeypatch):
+    session_id = fresh_db.create_session(
+        source_type="topic",
+        source_ref="normal conversation",
+        level="A1",
+    )
+    monkeypatch.setitem(api._quiz_cache, session_id, None)
+
+    questions = client.get(f"/sessions/{session_id}/quiz").json()
+
+    assert all(question["question"].startswith("¿") for question in questions)
 
 
 # ---------------------------------------------------------------------------

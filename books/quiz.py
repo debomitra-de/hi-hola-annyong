@@ -3,9 +3,9 @@ import urllib.error
 import urllib.request
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "qwen2.5:3b"
+MODEL = "qwen2.5:7b"
 
-# qwen2.5:3b has a 32k token context window (~24k chars usable for prompt)
+# qwen2.5:7b has a 32k token context window (~24k chars usable for prompt)
 _CHAPTER_CHAR_LIMIT = 12000
 
 
@@ -21,9 +21,10 @@ def generate_quiz(chapter_text: str, n_questions: int = 5, level: str = "B1") ->
         f"Based on the text below, generate exactly {n_questions} multiple-choice quiz questions "
         f"to test comprehension and vocabulary.\n\n"
         f"Return ONLY a valid JSON array. Each item must have:\n"
-        f'  "question": the question in English or Spanish\n'
+        f'  "question": a clear, simple question written in Spanish\n'
         f'  "options": array of exactly 4 answer choices (strings)\n'
         f'  "answer": the correct choice — must exactly match one of the options strings\n\n'
+        f"Write every question in Spanish, not English. "
         f"Keep questions simple and appropriate for {level} learners.\n"
         f"Text:\n{excerpt}\n\nJSON array:"
     )

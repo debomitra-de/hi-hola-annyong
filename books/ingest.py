@@ -73,6 +73,8 @@ def ingest_book(pdf_path: str, db: Database) -> int:
     file_hash = _compute_hash(str(path))
     existing = db.get_book_by_hash(file_hash)
     if existing:
+        if not Path(existing["stored_path"]).is_file():
+            db.update_book_stored_path(existing["id"], str(path.resolve()))
         return existing["id"]
 
     try:

@@ -4,7 +4,7 @@ import time
 import urllib.error
 import urllib.request
 
-MODEL = "qwen2.5:3b"
+MODEL = "qwen2.5:7b"
 URL = "http://localhost:11434/api/chat"
 
 
