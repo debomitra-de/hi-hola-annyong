@@ -1,5 +1,21 @@
 import { useState, useEffect } from 'react'
 
+function correctOptionText(question) {
+  const options = Array.isArray(question.options) ? question.options : []
+  const answer = String(question.answer ?? '').trim()
+  const exactMatch = options.find(
+    option => typeof option === 'string' && option.trim().toLocaleLowerCase() === answer.toLocaleLowerCase(),
+  )
+  if (exactMatch !== undefined) return exactMatch
+
+  const letterMatch = answer.match(/^(?:option\s*)?([a-d])(?:[.)])?$/i)
+  if (letterMatch) {
+    const option = options[letterMatch[1].toUpperCase().charCodeAt(0) - 65]
+    if (typeof option === 'string') return option
+  }
+  return answer
+}
+
 function QuizSidebar({ topic, current, results, total, onHome }) {
   return (
     <div className="quiz-sidebar">
@@ -70,7 +86,7 @@ export default function Quiz({ onHome, topic, chapterId, sessionId }) {
   function handleCheck() {
     if (answered || selected === null) return
     const q = questions[current]
-    const correct = q.options[selected] === q.answer
+    const correct = q.options[selected] === correctOptionText(q)
     setIsCorrect(correct)
     setAnswered(true)
   }
@@ -149,6 +165,7 @@ export default function Quiz({ onHome, topic, chapterId, sessionId }) {
   }
 
   const q = questions[current]
+  const correctAnswer = correctOptionText(q)
 
   return (
     <div className="quiz-screen">
@@ -169,7 +186,7 @@ export default function Quiz({ onHome, topic, chapterId, sessionId }) {
             {(q.options || []).map((opt, i) => {
               let cls = 'mcq-option'
               if (answered) {
-                if (opt === q.answer) cls += ' correct'
+                if (opt === correctAnswer) cls += ' correct'
                 else if (i === selected) cls += ' wrong'
               } else if (i === selected) {
                 cls += ' selected'
@@ -201,7 +218,7 @@ export default function Quiz({ onHome, topic, chapterId, sessionId }) {
 
           {answered && (
             <div className={`answer-feedback ${isCorrect ? 'correct' : 'wrong'}`}>
-              {isCorrect ? '✅ Correct! Well done.' : `❌ The correct answer is: "${q.answer}"`}
+              {isCorrect ? '✅ Correct! Well done.' : `❌ The correct answer is: "${correctAnswer}"`}
             </div>
           )}
         </div>

@@ -64,7 +64,7 @@ class MockLLM:
 class OllamaLLM:
     def __init__(
         self,
-        model: str = "qwen2.5:3b",
+        model: str = "qwen2.5:7b",
         url: str = "http://localhost:11434/api/chat",
         timeout_seconds: float = 30,
         temperature: float = 0.3,

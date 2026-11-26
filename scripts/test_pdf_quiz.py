@@ -44,7 +44,7 @@ print("\nGenerating quiz questions via Ollama ...")
 questions = generate_quiz(chapter["cleaned_text"], n_questions=5)
 
 if not questions:
-    print("No questions returned. Is Ollama running with qwen2.5:3b?")
+    print("No questions returned. Is Ollama running with qwen2.5:7b?")
     sys.exit(1)
 
 print(f"\n--- Quiz: {chapter['title']} ---\n")

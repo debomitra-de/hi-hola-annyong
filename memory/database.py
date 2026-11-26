@@ -601,6 +601,14 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def update_book_stored_path(self, book_id: int, stored_path: str) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE books SET stored_path = ? WHERE id = ?",
+                (stored_path, book_id),
+            )
+            conn.commit()
+
     # ------------------------------------------------------------------
     # Chapters
     # ------------------------------------------------------------------
